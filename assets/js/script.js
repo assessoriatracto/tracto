@@ -2,15 +2,15 @@
 const clientLogoTrack = document.getElementById("clientLogoTrack");
 if (clientLogoTrack) {
   const clientLogos = [
-    ["assets/img/clients/client-motor-master.png", "Motor Master"],
-    ["assets/img/clients/client-ferragista-maike.png", "Ferragista Maike"],
-    ["assets/img/clients/client-parafusos.png", "Parafusos Máquinas e Ferramentas"],
-    ["assets/img/clients/client-real-ferragista.png", "Real Ferragista"],
-    ["assets/img/clients/client-izf-ismaik.png", "iZF Ismaik Ferragista"],
-    ["assets/img/clients/client-sp-ferragista.png", "S&P Ferragista"],
-    ["assets/img/clients/client-pracasa-ferragista.png", "Pra Casa Ferragista"],
-    ["assets/img/clients/client-bastos-materiais.png", "Bastos Materiais"],
-    ["assets/img/clients/client-mix-limpeza.png?v=2", "Mix Limpeza"],
+    ["/assets/img/clients/client-motor-master.png", "Motor Master"],
+    ["/assets/img/clients/client-ferragista-maike.png", "Ferragista Maike"],
+    ["/assets/img/clients/client-parafusos.png", "Parafusos Máquinas e Ferramentas"],
+    ["/assets/img/clients/client-real-ferragista.png", "Real Ferragista"],
+    ["/assets/img/clients/client-izf-ismaik.png", "iZF Ismaik Ferragista"],
+    ["/assets/img/clients/client-sp-ferragista.png", "S&P Ferragista"],
+    ["/assets/img/clients/client-pracasa-ferragista.png", "Pra Casa Ferragista"],
+    ["/assets/img/clients/client-bastos-materiais.png", "Bastos Materiais"],
+    ["/assets/img/clients/client-mix-limpeza.png?v=2", "Mix Limpeza"],
   ];
   const tiles = clientLogos.map(([src, alt]) => `<div class="logo-tile"><img src="${src}" alt="${alt}"></div>`).join("");
   clientLogoTrack.innerHTML = tiles + tiles;
