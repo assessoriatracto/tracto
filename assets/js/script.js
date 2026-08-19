@@ -87,7 +87,7 @@ document.querySelectorAll("form.js-lead-form").forEach((form) => {
 });
 
 // ===== Fade-in on scroll =====
-const revealTargets = document.querySelectorAll(".desafio-card, .benefit-card, .method-card, .obter-item, .faq-item, .case-card, .testi-card, .result-card, .side-pill, .team-card, .graph-card, .graph-wrap .solution-copy, .market-news-copy, .market-news-img, .market-callout, .compare-card, .diag-card, .cta-final");
+const revealTargets = document.querySelectorAll(".desafio-card, .benefit-card, .method-card, .obter-item, .faq-item, .case-card, .testi-card, .testi-video-wrap, .result-card, .side-pill, .team-card, .graph-card, .graph-wrap .solution-copy, .market-news-copy, .market-news-img, .market-callout, .compare-card, .diag-card, .cta-final");
 const revealObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {

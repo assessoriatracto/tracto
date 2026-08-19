@@ -666,6 +666,18 @@ a{color:inherit;}
   border:1px solid rgba(255,255,255,.1);
   padding:5px 10px; border-radius:20px;
 }
+
+/* ============ TESTIMONIAL VIDEO (embed real) ============ */
+.testi-video-wrap{max-width:320px; margin:44px auto 0;}
+.testi-video{
+  position:relative; width:100%; aspect-ratio:9/16;
+  border-radius:var(--radius); overflow:hidden;
+  border:1px solid var(--card-border); background:var(--card-dark);
+}
+.testi-video iframe{position:absolute; inset:0; width:100%; height:100%; border:0; display:block;}
+.testi-video-caption{margin-top:18px; text-align:center;}
+.testi-video-caption strong{color:#fff; display:block; font-size:16px; margin-bottom:4px;}
+.testi-video-caption span{color:var(--gray-2); font-size:13px;}
 .testi-card p{padding:16px 18px 20px; color:var(--gray-2); font-size:13px; line-height:1.5;}
 @media (max-width:800px){ .testi-grid{grid-template-columns:1fr;} }
 
