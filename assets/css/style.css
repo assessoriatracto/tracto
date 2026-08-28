@@ -670,6 +670,11 @@ a{color:inherit;}
 
 /* ============ TESTIMONIAL VIDEO (embed real) ============ */
 .testi-video-wrap{max-width:320px; margin:44px auto 0;}
+.testi-video-grid{
+  display:flex; flex-wrap:wrap; justify-content:center;
+  gap:40px; max-width:720px; margin:44px auto 0;
+}
+.testi-video-grid .testi-video-wrap{margin:0;}
 .testi-video{
   position:relative; width:100%; aspect-ratio:9/16;
   border-radius:var(--radius); overflow:hidden;
