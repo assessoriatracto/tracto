@@ -1,12 +1,19 @@
 # Formulários + CRM Tracto
 
-- `/aplicar/?f=trafego` formulário de Tráfego Pago (réplica do Respondi KIy9LLMN)
-- `/aplicar/?f=marketplace` formulário de Marketplace (réplica do OhHOTxzG)
-- `/aplicar/?f=home` formulário da Home (réplica do FOD4RAan)
-- `/aplicar/?f=completo` modelo com todos os recursos (caixas de seleção, texto longo, condicionais, saltos, escala, data, consentimento, duas telas finais)
-- `/crm/` central de leads, dashboard, formulários e ajustes
+- `assessoriatracto.com.br/aplicar/` formulário geral (réplica do Respondi FOD4RAan)
+- `assessoriatracto.com.br/aplicar/trafego/` Tráfego Pago (réplica do KIy9LLMN)
+- `assessoriatracto.com.br/aplicar/marketplace/` Marketplace (réplica do OhHOTxzG)
+- `assessoriatracto.com.br/aplicar/diagnostico/` modelo com todos os recursos
+- `crm.assessoriatracto.com.br` central de leads, dashboard, formulários e ajustes
 
-Sem configuração, form e CRM rodam em modo demo (dados só no navegador).
+Sem Supabase configurado, form e CRM rodam em modo demo só no localhost. Em produção o form mostra erro de envio e o CRM avisa que falta configurar.
+
+## Publicar
+
+- Site e formulários: commit e push em `main` deste repo (GitHub Pages).
+- CRM: depois do push, rode `tools/publicar-crm.sh`. Ele copia `crm/` pro repo `assessoriatracto/crm`, que serve `crm.assessoriatracto.com.br`. O CRM carrega banco, formulários e config de `assessoriatracto.com.br`, então publique o site antes.
+- Formulário novo: adicione em `assets/js/forms.js` com um `slug` e rode `node tools/gerar-slugs.mjs`.
+- DNS (GoDaddy): `crm` CNAME `assessoriatracto.github.io`.
 
 ## Ligar o Supabase
 
@@ -14,7 +21,8 @@ Sem configuração, form e CRM rodam em modo demo (dados só no navegador).
 2. SQL Editor > New query > cole `supabase/schema.sql` > Run. Pode rodar de novo quando atualizar o arquivo.
 3. Project Settings > API: copie a Project URL e a anon public key para `assets/js/tracto-config.js`.
 4. Authentication > Sign In / Providers: desligue "Allow new users to sign up".
-5. Authentication > Users > Add user: crie seu login. O primeiro usuário vira ativo automaticamente; os próximos entram inativos e você libera em CRM > Ajustes > Equipe.
+5. Authentication > URL Configuration: Site URL `https://crm.assessoriatracto.com.br`.
+6. Authentication > Users > Add user: crie seu login. O primeiro usuário vira ativo automaticamente; os próximos entram inativos e você libera em CRM > Ajustes > Equipe.
 
 ## Segurança
 
