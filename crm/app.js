@@ -3,10 +3,11 @@ import {
   S, $, $$, esc, ICON, FAT, COLORS, initials, isHot, stageOf, profileOf, labelOf, isInactive, isDue, fatShort, brl, pct, num,
   fmtPhone, fullDate, longDate, addedAt, ago, sourceLabel, formName, waLink, toast, fail, popover, closePop, menu, multiSelect,
   modal, confirmBox, downloadCSV
-} from './util.js?v=4';
-import { renderDashboard } from './dashboard.js?v=4';
-import { renderForms, renderSettings } from './admin.js?v=4';
-import { renderIntegrations, renderPixel, leadMetaEvents, statusPill } from './integrations.js?v=4';
+} from './util.js?v=5';
+import { renderDashboard } from './dashboard.js?v=5';
+import { renderForms, renderSettings } from './admin.js?v=5';
+import { renderIntegrations, renderPixel, leadMetaEvents, statusPill } from './integrations.js?v=5';
+import { renderRecovery, loadPartials } from './recovery.js?v=5';
 
 // ============================================================
 // preferências locais (por navegador)
@@ -61,10 +62,17 @@ async function boot() {
   $('#demoBar').hidden = LIVE;
   $('#logoutBtn').hidden = !LIVE;
   await loadAll();
-  DB.subscribe((type, row) => {
-    if (type === 'INSERT' && row) toast('Novo lead: ' + row.nome);
-    clearTimeout(boot._t); boot._t = setTimeout(async () => { await loadAll(false); route(); }, 400);
+  DB.subscribe((type, row, table) => {
+    if (table === 'leads' && type === 'INSERT' && row) toast('Novo lead: ' + row.nome);
+    clearTimeout(boot._t);
+    boot._t = setTimeout(async () => {
+      if (table === 'partial_leads') { await refreshPartialsBadge(); if (location.hash.startsWith('#/recuperacao')) route(); return; }
+      await loadAll(false); route();
+    }, 400);
   });
+  window.addEventListener('tracto:reload-leads', async () => { await loadAll(false); });
+  window.addEventListener('tracto:open-lead', (e) => { if (S.leads.some((l) => l.id === e.detail)) openDrawer(e.detail); });
+  refreshPartialsBadge();
   window.addEventListener('hashchange', route);
   route();
   const due = S.leads.filter(isDue).length;
@@ -86,6 +94,14 @@ $('#loginForm').addEventListener('submit', async (e) => {
 });
 $('#logoutBtn').addEventListener('click', async (e) => { e.preventDefault(); await DB.signOut(); location.reload(); });
 
+async function refreshPartialsBadge() {
+  try {
+    const list = await loadPartials();
+    const n = list.filter((p) => p.status === 'abandonado' && (p.whatsapp || p.email) && !p.contacted_at).length;
+    const b = $('#recBadge'); b.textContent = n; b.hidden = !n;
+  } catch (e) { /* aba funciona mesmo sem o contador */ }
+}
+
 export async function loadAll(showSpinner = true) {
   if (showSpinner) $('#view').innerHTML = '<div class="loading">Carregando…</div>';
   try {
@@ -105,6 +121,7 @@ function route() {
   else if (r === 'ajustes') renderSettings(view, async () => { await loadAll(false); });
   else if (r === 'integracoes') renderIntegrations(view);
   else if (r === 'pixel') renderPixel(view);
+  else if (r === 'recuperacao') renderRecovery(view).then(refreshPartialsBadge);
   else renderLeads();
 }
 export const rerender = route;
@@ -231,7 +248,7 @@ function chipsHtml(l) {
   if (l.source === 'pago') out.push('<span class="chip paid">Pago</span>');
   else if (l.source === 'organico') out.push('<span class="chip">Orgânico</span>');
   if (isInactive(l)) out.push('<span class="chip inactive" title="Sem atividade há 7+ dias">Inativo</span>');
-  out.push(l.form_id === 'manual' ? '<span class="chip">Cadastro manual</span>' : '<span class="chip form">Formulário preenchido</span>');
+  out.push(l.recovered_from ? '<span class="chip rem">Recuperado</span>' : l.form_id === 'manual' ? '<span class="chip">Cadastro manual</span>' : l.form_id === 'api' ? '<span class="chip">Via API</span>' : '<span class="chip form">Formulário preenchido</span>');
   if (isHot(l)) out.push(`<span class="chip hot">${fatShort(l.faturamento)}</span>`);
   if (l.reminder_at) out.push(`<span class="chip ${isDue(l) ? 'due' : 'rem'}">${ICON.bell}${isDue(l) ? 'Vencido' : new Date(l.reminder_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>`);
   (l.label_ids || []).map(labelOf).filter(Boolean).forEach((x) => out.push(`<span class="chip tag" style="--c:${x.color}">${esc(x.name)}</span>`));
@@ -620,7 +637,7 @@ function renderDrawer() {
         <div class="form-meta">${esc(formName(l))}<br>Identificação do lead ${esc(l.id.slice(0, 8).toUpperCase())}<br>Enviado em ${esc(longDate(l.created_at))}.</div>
         ${(l.answers || []).length ? `<div class="answers">${l.answers.map((a) => `<div><div class="q">${esc(a.label)}</div><div class="a">${esc(a.value)}</div></div>`).join('')}</div>` : '<p class="muted">Lead cadastrado manualmente, sem respostas de formulário.</p>'}
       </div>
-      <div class="sec" id="metaSec" hidden><h4>Eventos enviados à Meta</h4><div class="meta-evs"></div></div>
+      <div class="sec" id="metaSec" hidden><h4>Eventos enviados (Meta e Google)</h4><div class="meta-evs"></div></div>
       ${tracking.length ? `<div class="sec"><h4>Rastreamento</h4><dl class="kv" style="margin:10px 0 0">${tracking.map(([k, n]) => `<dt>${n}</dt><dd>${esc(l[k])}</dd>`).join('')}<dt>Fonte</dt><dd>${sourceLabel(l.source)}</dd></dl></div>` : ''}
       <div class="dr-foot"><button class="b b-danger" data-d="delete"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>Excluir lead</button></div>
     </div>`;
@@ -635,12 +652,13 @@ async function loadMetaEvents() {
   const sec = $('#metaSec'); if (!sec) return;
   // um evento por linha (o mesmo evento vai pra cada pixel)
   const byId = new Map();
-  evs.filter((e) => !e.test).forEach((e) => { if (!byId.has(e.event_id)) byId.set(e.event_id, { ...e, pixels: 0, ok: 0 }); const r = byId.get(e.event_id); r.pixels++; if (e.status_code >= 200 && e.status_code < 300) r.ok++; });
+  evs.filter((e) => !e.test).forEach((e) => { const k = e.platform + e.event_id; if (!byId.has(k)) byId.set(k, { ...e, pixels: 0, ok: 0 }); const r = byId.get(k); r.pixels++; if (e.status_code >= 200 && e.status_code < 300) r.ok++; });
   const rows = [...byId.values()];
   sec.hidden = !rows.length;
   sec.querySelector('.meta-evs').innerHTML = rows.map((e) => {
     const v = e.payload?.data?.[0]?.custom_data?.value;
-    return `<div class="meta-ev"><code>${esc(e.event_name)}</code><span class="muted">${fullDate(e.created_at)}${v != null ? ' · ' + brl(v) : ''}</span>${e.ok === e.pixels ? `<span class="pill good">${e.pixels} pixel${e.pixels > 1 ? 's' : ''}</span>` : statusPill(e.status_code, e.response)}</div>`;
+    const v2 = v ?? e.payload?.events?.[0]?.params?.value;
+    return `<div class="meta-ev"><code>${esc(e.event_name)}</code><span class="muted">${e.platform === 'ga4' ? 'GA4 · ' : ''}${fullDate(e.created_at)}${v2 != null ? ' · ' + brl(v2) : ''}</span>${e.ok === e.pixels ? `<span class="pill good">${e.pixels} pixel${e.pixels > 1 ? 's' : ''}</span>` : statusPill(e.status_code, e.response)}</div>`;
   }).join('');
 }
 

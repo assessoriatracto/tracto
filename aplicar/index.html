@@ -12,22 +12,8 @@
 <link rel="stylesheet" href="/assets/css/app.css?v=3">
 <link rel="stylesheet" href="/aplicar/form.css?v=2">
 
-<!-- Meta Pixel Code -->
-<script>
-!function(f,b,e,v,n,t,s)
-{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];
-s.parentNode.insertBefore(t,s)}(window, document,'script',
-'https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '1357841419671798');
-fbq('init', '2142406153298000');
-fbq('track', 'PageView');
-</script>
+<!-- Pixels (Meta e Google) são carregados pelo /assets/js/tracking.js a partir da configuração do CRM -->
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1357841419671798&ev=PageView&noscript=1"/><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=2142406153298000&ev=PageView&noscript=1"/></noscript>
-<!-- End Meta Pixel Code -->
 </head>
 <body>
 
@@ -37,60 +23,85 @@ fbq('track', 'PageView');
 
 <script src="/assets/js/tracto-config.js?v=3"></script>
 <script type="module">
-import { DB } from '/assets/js/db.js?v=4';
-import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=4';
-import { mountForm } from '/assets/js/form-engine.js?v=4';
+import { DB } from '/assets/js/db.js?v=5';
+import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=5';
+import { mountForm } from '/assets/js/form-engine.js?v=5';
+import { createTracker } from '/assets/js/tracking.js?v=5';
 
 const params = new URLSearchParams(location.search);
+const qp = (k) => params.get(k) || null;
+const store = (k, fresh, s = localStorage) => { try { const v = s.getItem(k) || fresh(); s.setItem(k, v); return v; } catch (e) { return fresh(); } };
+const cookie = (n) => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || null;
+
 // /aplicar/<slug>/ define o formulário; ?f=<id> continua funcionando
 const slug = (location.pathname.match(/\/aplicar\/([^/]+)/) || [])[1];
-const form = (slug && formBySlug(slug)) || FORMS[params.get('f')] || FORMS[DEFAULT_FORM];
+let form = (slug && formBySlug(slug)) || FORMS[qp('f')] || FORMS[DEFAULT_FORM];
 
-let sid;
-try { sid = sessionStorage.getItem('tf_sid') || crypto.randomUUID(); sessionStorage.setItem('tf_sid', sid); }
-catch (e) { sid = crypto.randomUUID(); }
-const utm = (k) => params.get(k) || null;
+// retomada pelo link enviado na recuperação (?retomar=<token>)
+let resume = null;
+if (qp('retomar')) {
+  try { resume = await DB.getPartial(qp('retomar')); } catch (e) { resume = null; }
+  if (resume && FORMS[resume.form_id]) form = FORMS[resume.form_id];
+}
+
+const visitorId = store('trk_vid', () => crypto.randomUUID());
+let sid = resume?.session_id || store('tf_sid', () => crypto.randomUUID(), sessionStorage);
+try { sessionStorage.setItem('tf_sid', sid); } catch (e) {}
+const fbclid = qp('fbclid');
+// dados que acompanham o rascunho e o lead (Meta e Google usam pra reconhecer quem converteu)
+const context = () => ({
+  form_id: form.id, form_name: form.name, session_id: sid, visitor_id: visitorId,
+  fbp: cookie('_fbp'), fbc: cookie('_fbc') || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null), ga_cookie: cookie('_ga'),
+  utm_source: qp('utm_source'), utm_medium: qp('utm_medium'), utm_campaign: qp('utm_campaign'), utm_content: qp('utm_content'), utm_term: qp('utm_term'),
+  fbclid, gclid: qp('gclid'), gbraid: qp('gbraid'), wbraid: qp('wbraid'),
+  referrer: document.referrer || null, user_agent: navigator.userAgent.slice(0, 300), event_source_url: location.href
+});
+
+const tracker = createTracker({ form, visitorId, loadConfig: () => DB.publicTracking() });
+tracker.pageView();
+tracker.viewContent();
 
 const track = (event, step_id = null) => {
-  if (event === 'start' && window.fbq) fbq('trackCustom', 'IniciouFormulario', { content_name: form.name });
-  return DB.trackEvent({
-    form_id: form.id, session_id: sid, event, step_id,
-    utm_source: utm('utm_source'), utm_campaign: utm('utm_campaign')
-  }).catch(() => {});
+  if (event === 'start') tracker.formStart();
+  return DB.trackEvent({ form_id: form.id, session_id: sid, event, step_id, utm_source: qp('utm_source'), utm_campaign: qp('utm_campaign') }).catch(() => {});
 };
-
-// identificadores da Meta: _fbp (navegador) e _fbc (clique no anúncio)
-const cookie = (n) => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || null;
-const fbclid = utm('fbclid');
-const fbc = cookie('_fbc') || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
-const PIXELS = ['1357841419671798', '2142406153298000'];
-
 track('view');
 
-mountForm(document.getElementById('form'), form, {
+let done = false;
+let lastSaved = '';
+const saveDraft = (state, opts) => {
+  if (done || !state?.raw || !Object.keys(state.raw).length) return;
+  const payload = { ...context(), ...state };
+  const key = JSON.stringify(payload.raw);
+  if (key === lastSaved && !opts?.keepalive) return;
+  lastSaved = key;
+  DB.savePartial(payload, opts).catch(() => {});
+};
+
+const engine = mountForm(document.getElementById('form'), form, {
   track,
+  initial: resume ? { answers: resume.raw } : null,
+  onProgress(state) {
+    saveDraft(state);
+    tracker.identify(state);
+    tracker.formStep(state.step_id, state.step_index, state.total_steps);
+  },
   async submit(data) {
-    // mesmo ID no Pixel e na Conversions API: a Meta deduplica e fica com o evento mais completo
+    // mesmo ID no navegador e no servidor: Meta e Google contam uma conversão só
     const eventId = crypto.randomUUID();
-    await DB.submitLead({
-      ...data,
-      form_id: form.id, form_name: form.name, session_id: sid,
-      lead_event_id: eventId, fbp: cookie('_fbp'), fbc, event_source_url: location.href,
-      utm_source: utm('utm_source'), utm_medium: utm('utm_medium'), utm_campaign: utm('utm_campaign'),
-      utm_content: utm('utm_content'), utm_term: utm('utm_term'), fbclid: utm('fbclid'), gclid: utm('gclid'),
-      referrer: document.referrer || null, user_agent: navigator.userAgent.slice(0, 300)
-    });
+    await DB.submitLead({ ...context(), ...data, lead_event_id: eventId });
+    done = true;
     track('submit');
-    if (window.fbq) {
-      // correspondência avançada: o pixel faz o hash no navegador antes de enviar
-      const [fn, ...rest] = String(data.nome || '').trim().toLowerCase().split(/\s+/);
-      const am = { em: data.email?.toLowerCase(), ph: String(data.whatsapp || '').replace(/\D/g, ''), fn, ln: rest.at(-1), country: 'br', st: data.estado?.toLowerCase() };
-      Object.keys(am).forEach((k) => !am[k] && delete am[k]);
-      PIXELS.forEach((id) => fbq('init', id, am));
-      fbq('track', 'Lead', { content_name: form.name, content_category: 'lead', currency: 'BRL' }, { eventID: eventId });
-    }
+    tracker.identify(data);
+    tracker.lead({ eventId, faturamento: data.faturamento });
+    try { sessionStorage.removeItem('tf_sid'); } catch (e) {}
   }
 });
+
+// fechou a aba ou trocou de app no meio: salva o que estiver digitado
+const flush = () => { if (!done) saveDraft(engine.draft(), { keepalive: true }); };
+addEventListener('pagehide', flush);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
 </script>
 </body>
 </html>

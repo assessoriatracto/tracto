@@ -51,7 +51,7 @@ export function evaluate(cond, answers) {
   }
 }
 
-export function mountForm(root, form, { submit, track, onDone } = {}) {
+export function mountForm(root, form, { submit, track, onDone, onProgress, initial } = {}) {
   const F = form.fields;
   const idx = Object.fromEntries(F.map((f, i) => [f.id, i]));
   const answers = {};
@@ -407,6 +407,10 @@ export function mountForm(root, form, { submit, track, onDone } = {}) {
     }
     if (f.type === 'welcome' && !started) { started = true; track?.('start'); }
     const target = resolveNext(cur);
+    // salvamento automático: cada resposta aceita vai pro rascunho
+    if (QUESTION.includes(f.type)) {
+      try { onProgress?.(progressState(f.id, target)); } catch (e) { console.error(e); }
+    }
     if (F[target].type === 'thankyou') {
       busy = true;
       const btn = el.querySelector('.tf-ok');
@@ -437,6 +441,26 @@ export function mountForm(root, form, { submit, track, onDone } = {}) {
     go(prev, -1);
   }
 
+  function answeredCount() { return [...history, cur].filter((i) => QUESTION.includes(F[i].type) && answers[F[i].id] !== undefined && answers[F[i].id] !== '').length; }
+  function progressState(stepId, target = cur) {
+    const done = answeredCount();
+    return { ...collect(), raw: JSON.parse(JSON.stringify(answers)), step_id: stepId, step_index: done,
+      total_steps: done + (target >= 0 && target < F.length && F[target].type !== 'thankyou' ? remaining(target) : 0) };
+  }
+  // rascunho com o que está sendo digitado agora (sem validar), pra salvar ao fechar a aba
+  function draft() {
+    const f = F[cur];
+    if (f && QUESTION.includes(f.type)) {
+      const input = stage.querySelector('.tf-slide:not(.is-leaving) .tf-input:not(.tf-other-input):not(.tf-dd-input)');
+      if (input && input.value.trim()) {
+        const v = input.value.trim();
+        answers[f.id] = f.type === 'phone' ? (v.replace(/\D/g, '').length >= 10 ? '+55' + v.replace(/\D/g, '') : answers[f.id]) : f.type === 'number' ? answers[f.id] : v;
+      }
+      if (answers[f.id] !== undefined && answers[f.id] !== '') return progressState(f.id, resolveNext(cur));
+    }
+    return progressState(f?.id);
+  }
+
   function collect() {
     const path = [...history, cur];
     const list = path.map((i) => F[i]).filter((f) => QUESTION.includes(f.type) && answers[f.id] !== undefined && answers[f.id] !== '');
@@ -447,8 +471,23 @@ export function mountForm(root, form, { submit, track, onDone } = {}) {
     return out;
   }
 
-  go(0, 0);
-  return { answers, go: (id) => go(idx[id], 1) };
+  // retomada: preenche as respostas salvas e continua na primeira pergunta sem resposta
+  if (initial?.answers && Object.keys(initial.answers).length) {
+    Object.assign(answers, initial.answers);
+    started = true;
+    let i = 0;
+    const guard = new Set();
+    while (i >= 0 && i < F.length && !guard.has(i)) {
+      guard.add(i);
+      const f = F[i];
+      const has = answers[f.id] !== undefined && answers[f.id] !== '' && !(Array.isArray(answers[f.id]) && !answers[f.id].length);
+      if (f.type === 'welcome' || (QUESTION.includes(f.type) && has) || f.type === 'statement') { history.push(i); i = resolveNext(i); continue; }
+      break;
+    }
+    if (i < 0 || F[i].type === 'thankyou') i = history.pop() ?? 0;
+    go(i, 0);
+  } else go(0, 0);
+  return { answers, draft, go: (id) => go(idx[id], 1) };
 }
 
 // ---------- helpers ----------

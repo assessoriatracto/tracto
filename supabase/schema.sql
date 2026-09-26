@@ -1,339 +1,31 @@
 -- ============================================================
--- Tracto: Formulários + CRM de leads
+-- Tracto · Formulários + CRM + Rastreamento
 -- Rode este arquivo inteiro no Supabase: SQL Editor > New query > Run.
--- Pode rodar de novo sem perder dados (é idempotente).
+-- É idempotente: pode rodar de novo a cada atualização sem perder dados.
+--
+--  0. Extensões            7. Rastreamento (pixels, eventos)
+--  1. Utilitários          8. Integrações (API, webhooks)
+--  2. Equipe               9. Representações JSON
+--  3. Pipeline            10. Envios (HTTP, webhooks, Meta, Google)
+--  4. Leads               11. Gatilhos
+--  5. Histórico           12. RPCs públicas (form, API)
+--  6. Formulário          13. RPCs da equipe
+--     e recuperação       14. Permissões · 15. RLS · 16. Realtime e agendamentos
 -- ============================================================
 
 
--- ============ EQUIPE ============
-create table if not exists public.profiles (
-  id          uuid primary key references auth.users(id) on delete cascade,
-  created_at  timestamptz not null default now(),
-  nome        text not null,
-  email       text not null,
-  ativo       boolean not null default false
-);
-
--- O primeiro usuário criado vira ativo automaticamente. Os próximos entram
--- inativos e precisam ser liberados por alguém da equipe (CRM > Ajustes > Equipe).
-create or replace function public.handle_new_user() returns trigger
-language plpgsql security definer set search_path = public as $$
-begin
-  insert into public.profiles (id, nome, email, ativo)
-  values (
-    new.id,
-    coalesce(nullif(new.raw_user_meta_data->>'nome', ''), split_part(new.email, '@', 1)),
-    new.email,
-    not exists (select 1 from public.profiles where ativo)
-  )
-  on conflict (id) do nothing;
-  return new;
-end $$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created after insert on auth.users
-for each row execute function public.handle_new_user();
-
--- usuários que já existiam antes do schema
-insert into public.profiles (id, nome, email, ativo)
-select u.id, split_part(u.email, '@', 1), u.email, false from auth.users u
-on conflict (id) do nothing;
-update public.profiles set ativo = true
-where id = (select id from public.profiles order by created_at limit 1)
-  and not exists (select 1 from public.profiles where ativo);
-
-create or replace function public.is_team() returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.profiles where id = auth.uid() and ativo);
-$$;
-
--- ============ ESTÁGIOS ============
-create table if not exists public.stages (
-  id        uuid primary key default gen_random_uuid(),
-  name      text not null check (char_length(name) between 1 and 40),
-  color     text not null default '#FFAD00',
-  position  int  not null default 0,
-  kind      text not null default 'open' check (kind in ('open', 'won', 'lost'))
-);
-
-insert into public.stages (name, color, position, kind)
-select * from (values
-  ('Em análise',        '#6AA8FF', 0, 'open'),
-  ('Contato realizado', '#B58CFF', 1, 'open'),
-  ('Ligação',           '#4FD1C5', 2, 'open'),
-  ('Qualificado',       '#FFAD00', 3, 'open'),
-  ('Reunião agendada',  '#FF8A3D', 4, 'open'),
-  ('Venda realizada',   '#3DDC84', 5, 'won'),
-  ('Perdido',           '#6B6B6B', 6, 'lost')
-) v(name, color, position, kind)
-where not exists (select 1 from public.stages);
-
--- ============ RÓTULOS ============
-create table if not exists public.labels (
-  id     uuid primary key default gen_random_uuid(),
-  name   text not null unique check (char_length(name) between 1 and 30),
-  color  text not null default '#FFAD00'
-);
-
--- ============ LEADS ============
-create table if not exists public.leads (
-  id               uuid primary key default gen_random_uuid(),
-  created_at       timestamptz not null default now(),
-  updated_at       timestamptz not null default now(),
-  last_activity_at timestamptz not null default now(),
-
-  form_id          text not null default 'manual',
-  form_name        text,
-  answers          jsonb not null default '[]'::jsonb,   -- [{id, label, value}] na ordem respondida
-
-  nome             text not null check (char_length(nome) between 2 and 120),
-  whatsapp         text check (whatsapp is null or char_length(whatsapp) between 10 and 20),
-  email            text check (email is null or char_length(email) <= 160),
-  instagram        text check (instagram is null or char_length(instagram) <= 60),
-  faturamento      text,
-
-  stage_id         uuid references public.stages(id) on delete set null,
-  assigned_to      uuid references public.profiles(id) on delete set null,
-  label_ids        uuid[] not null default '{}',
-  valor            numeric(12,2),
-  reminder_at      timestamptz,
-  reminder_note    text,
-
-  source           text not null default 'organico',
-  utm_source       text,
-  utm_medium       text,
-  utm_campaign     text,
-  utm_content      text,
-  utm_term         text,
-  fbclid           text,
-  referrer         text,
-  user_agent       text,
-  session_id       text
-);
-
--- colunas de rastreamento (Meta Pixel / Conversions API) e origem via API
-alter table public.leads add column if not exists fbp text;
-alter table public.leads add column if not exists fbc text;
-alter table public.leads add column if not exists client_ip text;
-alter table public.leads add column if not exists event_source_url text;
-alter table public.leads add column if not exists lead_event_id text;
-alter table public.leads add column if not exists estado text;
-alter table public.leads add column if not exists cidade text;
-alter table public.leads add column if not exists meta_lead_id text;
-alter table public.leads drop constraint if exists leads_source_check;
-alter table public.leads add constraint leads_source_check check (source in ('pago', 'organico', 'manual', 'api'));
-
-create index if not exists leads_created_idx on public.leads (created_at desc);
-create index if not exists leads_stage_idx on public.leads (stage_id);
-create index if not exists leads_whatsapp_idx on public.leads (whatsapp);
-
--- ============ HISTÓRICO / NOTAS ============
-create table if not exists public.lead_activity (
-  id          uuid primary key default gen_random_uuid(),
-  lead_id     uuid not null references public.leads(id) on delete cascade,
-  created_at  timestamptz not null default now(),
-  author_id   uuid references public.profiles(id) on delete set null,
-  author_name text,
-  type        text not null check (type in ('created', 'note', 'stage', 'assign', 'label', 'reminder', 'edit')),
-  body        text not null check (char_length(body) between 1 and 1000)
-);
-create index if not exists lead_activity_idx on public.lead_activity (lead_id, created_at desc);
-
--- ============ EVENTOS DO FORM (analytics / abandono) ============
-create table if not exists public.form_events (
-  id          bigint generated always as identity primary key,
-  created_at  timestamptz not null default now(),
-  form_id     text not null check (char_length(form_id) <= 40),
-  session_id  text not null check (char_length(session_id) <= 40),
-  event       text not null check (event in ('view', 'start', 'step', 'submit')),
-  step_id     text check (char_length(step_id) <= 40),
-  utm_source  text check (char_length(utm_source) <= 100),
-  utm_campaign text check (char_length(utm_campaign) <= 150)
-);
-create index if not exists form_events_idx on public.form_events (form_id, created_at desc);
-
--- ============ TRIGGERS DE HISTÓRICO ============
-create or replace function public.author_name() returns text
-language sql stable security definer set search_path = public as $$
-  select coalesce((select nome from public.profiles where id = auth.uid()), 'Sistema');
-$$;
-
-create or replace function public.leads_before_update() returns trigger
-language plpgsql as $$
-begin
-  new.updated_at = now();
-  new.last_activity_at = now();
-  return new;
-end $$;
-
-drop trigger if exists leads_before_update on public.leads;
-create trigger leads_before_update before update on public.leads
-for each row execute function public.leads_before_update();
-
-create or replace function public.leads_log_changes() returns trigger
-language plpgsql security definer set search_path = public as $$
-declare
-  who text := public.author_name();
-begin
-  if tg_op = 'INSERT' then
-    insert into lead_activity (lead_id, author_id, author_name, type, body)
-    values (new.id, auth.uid(), who, 'created',
-      case when new.form_id = 'manual' then 'Lead criado manualmente'
-           else 'Formulário preenchido: ' || coalesce(new.form_name, new.form_id) end);
-    return new;
-  end if;
-
-  if new.stage_id is distinct from old.stage_id then
-    insert into lead_activity (lead_id, author_id, author_name, type, body)
-    values (new.id, auth.uid(), who, 'stage',
-      'Estágio: ' || coalesce((select name from stages where id = old.stage_id), 'sem estágio')
-      || ' → ' || coalesce((select name from stages where id = new.stage_id), 'sem estágio'));
-  end if;
-
-  if new.assigned_to is distinct from old.assigned_to then
-    insert into lead_activity (lead_id, author_id, author_name, type, body)
-    values (new.id, auth.uid(), who, 'assign',
-      'Atribuído a ' || coalesce((select nome from profiles where id = new.assigned_to), 'ninguém'));
-  end if;
-
-  if new.reminder_at is distinct from old.reminder_at then
-    insert into lead_activity (lead_id, author_id, author_name, type, body)
-    values (new.id, auth.uid(), who, 'reminder',
-      case when new.reminder_at is null then 'Lembrete removido'
-           else 'Lembrete para ' || to_char(new.reminder_at at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') end);
-  end if;
-  return new;
-end $$;
-
-drop trigger if exists leads_log_changes on public.leads;
-create trigger leads_log_changes after insert or update on public.leads
-for each row execute function public.leads_log_changes();
-
-create or replace function public.activity_touch_lead() returns trigger
-language plpgsql security definer set search_path = public as $$
-begin
-  if new.type = 'note' then
-    update leads set last_activity_at = now() where id = new.lead_id;
-  end if;
-  return new;
-end $$;
-
-drop trigger if exists activity_touch_lead on public.lead_activity;
-create trigger activity_touch_lead after insert on public.lead_activity
-for each row execute function public.activity_touch_lead();
-
-create or replace function public.labels_cleanup() returns trigger
-language plpgsql security definer set search_path = public as $$
-begin
-  update leads set label_ids = array_remove(label_ids, old.id) where old.id = any(label_ids);
-  return old;
-end $$;
-
-drop trigger if exists labels_cleanup on public.labels;
-create trigger labels_cleanup after delete on public.labels
-for each row execute function public.labels_cleanup();
-
--- ============ RPC PÚBLICA: envio do formulário ============
--- Único jeito do visitante (anon) gravar um lead. Valida e normaliza no servidor.
-create or replace function public.submit_lead(p jsonb) returns uuid
-language plpgsql security definer set search_path = public as $$
-declare
-  v_nome   text := left(btrim(p->>'nome'), 120);
-  v_wpp    text := regexp_replace(coalesce(p->>'whatsapp', ''), '\D', '', 'g');
-  v_email  text := nullif(lower(btrim(p->>'email')), '');
-  v_insta  text := nullif(lower(regexp_replace(coalesce(p->>'instagram', ''), '[@\s]', '', 'g')), '');
-  v_medium text := lower(coalesce(p->>'utm_medium', ''));
-  v_hdrs   json;
-  v_ip     text;
-  v_id     uuid;
-begin
-  if v_nome is null or char_length(v_nome) < 2 then raise exception 'nome obrigatório'; end if;
-  if char_length(v_wpp) < 10 or char_length(v_wpp) > 15 then raise exception 'whatsapp inválido'; end if;
-  if v_email is not null and v_email !~ '^[^\s@]+@[^\s@]+\.[^\s@]{2,}$' then v_email := null; end if;
-  if jsonb_typeof(coalesce(p->'answers', '[]'::jsonb)) <> 'array' or pg_column_size(p->'answers') > 20000 then raise exception 'respostas inválidas'; end if;
-
-  -- IP do visitante (Supabase repassa os headers da requisição)
-  begin v_hdrs := nullif(current_setting('request.headers', true), '')::json; exception when others then v_hdrs := null; end;
-  v_ip := btrim(split_part(coalesce(v_hdrs->>'cf-connecting-ip', v_hdrs->>'x-real-ip', v_hdrs->>'x-forwarded-for', ''), ',', 1));
-
-  -- reenvio do mesmo WhatsApp no mesmo form em 10 min: atualiza em vez de duplicar
-  select id into v_id from leads
-  where whatsapp = v_wpp and form_id = p->>'form_id' and created_at > now() - interval '10 minutes'
-  order by created_at desc limit 1;
-
-  if v_id is not null then
-    update leads set answers = coalesce(p->'answers', answers), nome = v_nome, email = coalesce(v_email, email),
-      instagram = coalesce(v_insta, instagram), faturamento = coalesce(p->>'faturamento', faturamento)
-    where id = v_id;
-    return v_id;
-  end if;
-
-  insert into leads (form_id, form_name, answers, nome, whatsapp, email, instagram, faturamento, estado, cidade,
-    stage_id, source, utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, referrer, user_agent, session_id,
-    fbp, fbc, client_ip, event_source_url, lead_event_id, meta_lead_id)
-  values (
-    left(coalesce(p->>'form_id', 'desconhecido'), 40), left(p->>'form_name', 120), coalesce(p->'answers', '[]'::jsonb),
-    v_nome, v_wpp, v_email, left(v_insta, 60), left(p->>'faturamento', 60), left(upper(p->>'estado'), 2), left(p->>'cidade', 80),
-    (select id from stages where kind = 'open' order by position limit 1),
-    case when nullif(p->>'fbclid', '') is not null or nullif(p->>'fbc', '') is not null or nullif(p->>'gclid', '') is not null
-           or v_medium in ('cpc', 'ppc', 'paid', 'paid_social', 'ads', 'ad', 'pago') then 'pago' else 'organico' end,
-    left(p->>'utm_source', 100), left(p->>'utm_medium', 100), left(p->>'utm_campaign', 150),
-    left(p->>'utm_content', 150), left(p->>'utm_term', 150), left(p->>'fbclid', 300),
-    left(p->>'referrer', 300), left(p->>'user_agent', 300), left(p->>'session_id', 40),
-    left(p->>'fbp', 120), left(p->>'fbc', 400), nullif(left(v_ip, 60), ''), left(p->>'event_source_url', 500),
-    left(coalesce(nullif(p->>'lead_event_id', ''), gen_random_uuid()::text), 60), left(p->>'meta_lead_id', 40)
-  )
-  returning id into v_id;
-  return v_id;
-end $$;
-
-revoke all on function public.submit_lead(jsonb) from public;
-grant execute on function public.submit_lead(jsonb) to anon, authenticated;
-
--- ============ RLS ============
-alter table public.profiles      enable row level security;
-alter table public.stages        enable row level security;
-alter table public.labels        enable row level security;
-alter table public.leads         enable row level security;
-alter table public.lead_activity enable row level security;
-alter table public.form_events   enable row level security;
-
-do $$
-declare t text;
-begin
-  foreach t in array array['stages', 'labels', 'leads', 'lead_activity'] loop
-    execute format('drop policy if exists "equipe" on public.%I', t);
-    execute format('create policy "equipe" on public.%I for all to authenticated using (public.is_team()) with check (public.is_team())', t);
-  end loop;
-end $$;
-
-drop policy if exists "equipe le perfis" on public.profiles;
-create policy "equipe le perfis" on public.profiles
-  for select to authenticated using (public.is_team() or id = auth.uid());
-drop policy if exists "equipe edita perfis" on public.profiles;
-create policy "equipe edita perfis" on public.profiles
-  for update to authenticated using (public.is_team()) with check (public.is_team());
-
--- visitante só registra eventos do form; equipe lê
-drop policy if exists "anon registra evento" on public.form_events;
-create policy "anon registra evento" on public.form_events
-  for insert to anon, authenticated with check (true);
-drop policy if exists "equipe le eventos" on public.form_events;
-create policy "equipe le eventos" on public.form_events
-  for select to authenticated using (public.is_team());
-
--- ============ REALTIME ============
-do $$
-begin
-  alter publication supabase_realtime add table public.leads;
-exception when duplicate_object then null;
-end $$;
-
 -- ============================================================
--- INTEGRAÇÕES: API, webhooks e Meta Conversions API
--- Os envios saem do próprio banco via pg_net (assíncrono, não atrasa o form).
+-- 0. EXTENSÕES
+-- pg_net faz as chamadas HTTP (webhooks, Meta, Google) de forma assíncrona.
+-- pg_cron marca formulários abandonados. Sem elas o CRM funciona, só sem esses envios.
 -- ============================================================
 do $$ begin create extension if not exists pg_net; exception when others then raise notice 'pg_net indisponível: %', sqlerrm; end $$;
+do $$ begin create extension if not exists pg_cron; exception when others then raise notice 'pg_cron indisponível: %', sqlerrm; end $$;
+
+
+-- ============================================================
+-- 1. UTILITÁRIOS
+-- ============================================================
 
 -- HMAC-SHA256 com funções nativas (assinatura dos webhooks)
 create or replace function public.hmac_sha256(msg text, key text) returns text
@@ -352,50 +44,340 @@ begin
   return encode(sha256(opad || sha256(ipad || convert_to(msg, 'UTF8'))), 'hex');
 end $$;
 
--- normaliza e faz hash SHA-256 (padrão Meta: minúsculo, sem espaços nas pontas)
+-- SHA-256 no padrão Meta/Google: minúsculo, sem espaços nas pontas
 create or replace function public.meta_hash(v text) returns text
 language sql immutable as $$
   select case when nullif(btrim(v), '') is null then null
     else encode(sha256(convert_to(lower(btrim(v)), 'UTF8')), 'hex') end;
 $$;
 
--- ---------- estágios → eventos da Meta ----------
+-- telefone só com dígitos e DDI 55 (aceita "(62) 99999-9999", "+55 62…", "5562…")
+create or replace function public.norm_phone(v text) returns text
+language sql immutable as $$
+  select case
+    when d is null or length(d) < 10 then null
+    when length(d) in (10, 11) then '55' || d
+    else d end
+  from (select nullif(regexp_replace(coalesce(v, ''), '\D', '', 'g'), '') as d) x;
+$$;
+
+-- UF a partir do DDD (enriquece a correspondência quando o form não pergunta o estado)
+create or replace function public.ddd_uf(phone text) returns text
+language sql immutable as $$
+  select case
+    when ddd between 11 and 19 then 'SP'
+    when ddd in (21, 22, 24) then 'RJ'
+    when ddd in (27, 28) then 'ES'
+    when ddd in (31, 32, 33, 34, 35, 37, 38) then 'MG'
+    when ddd in (41, 42, 43, 44, 45, 46) then 'PR'
+    when ddd in (47, 48, 49) then 'SC'
+    when ddd in (51, 53, 54, 55) then 'RS'
+    when ddd = 61 then 'DF'
+    when ddd in (62, 64) then 'GO'
+    when ddd = 63 then 'TO'
+    when ddd in (65, 66) then 'MT'
+    when ddd = 67 then 'MS'
+    when ddd = 68 then 'AC'
+    when ddd = 69 then 'RO'
+    when ddd in (71, 73, 74, 75, 77) then 'BA'
+    when ddd = 79 then 'SE'
+    when ddd in (81, 87) then 'PE'
+    when ddd = 82 then 'AL'
+    when ddd = 83 then 'PB'
+    when ddd = 84 then 'RN'
+    when ddd in (85, 88) then 'CE'
+    when ddd in (86, 89) then 'PI'
+    when ddd in (91, 93, 94) then 'PA'
+    when ddd in (92, 97) then 'AM'
+    when ddd = 95 then 'RR'
+    when ddd = 96 then 'AP'
+    when ddd in (98, 99) then 'MA'
+  end
+  from (select case when public.norm_phone(phone) like '55%' then substr(public.norm_phone(phone), 3, 2)::int end as ddd) x;
+$$;
+
+-- IP do visitante a partir dos headers que o Supabase repassa
+create or replace function public.request_ip() returns text
+language plpgsql stable as $$
+declare h json;
+begin
+  begin h := nullif(current_setting('request.headers', true), '')::json; exception when others then return null; end;
+  return nullif(left(btrim(split_part(coalesce(h->>'cf-connecting-ip', h->>'x-real-ip', h->>'x-forwarded-for', ''), ',', 1)), 60), '');
+end $$;
+
+-- client_id do GA4 a partir do cookie _ga ("GA1.1.123.456" → "123.456")
+create or replace function public.ga_client_id(cookie text) returns text
+language sql immutable as $$
+  select nullif(substring(coalesce(cookie, '') from '^GA\d\.\d\.(\d+\.\d+)$'), '');
+$$;
+
+
+-- ============================================================
+-- 2. EQUIPE
+-- O primeiro usuário vira ativo sozinho; os próximos entram inativos
+-- e alguém da equipe libera em CRM > Ajustes > Equipe.
+-- ============================================================
+create table if not exists public.profiles (
+  id          uuid primary key references auth.users(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  nome        text not null,
+  email       text not null,
+  ativo       boolean not null default false
+);
+
+create or replace function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, nome, email, ativo)
+  values (new.id, coalesce(nullif(new.raw_user_meta_data->>'nome', ''), split_part(new.email, '@', 1)), new.email,
+          not exists (select 1 from public.profiles where ativo))
+  on conflict (id) do nothing;
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users
+for each row execute function public.handle_new_user();
+
+insert into public.profiles (id, nome, email, ativo)
+select u.id, split_part(u.email, '@', 1), u.email, false from auth.users u
+on conflict (id) do nothing;
+update public.profiles set ativo = true
+where id = (select id from public.profiles order by created_at limit 1)
+  and not exists (select 1 from public.profiles where ativo);
+
+create or replace function public.is_team() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and ativo);
+$$;
+
+create or replace function public.author_name() returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce((select nome from public.profiles where id = auth.uid()), 'Sistema');
+$$;
+
+
+-- ============================================================
+-- 3. PIPELINE
+-- meta_event / ga4_event: evento enviado quando o lead entra no estágio.
+-- Nomes personalizados de propósito: só o formulário completo (Lead) é conversão.
+-- ============================================================
+create table if not exists public.stages (
+  id        uuid primary key default gen_random_uuid(),
+  name      text not null check (char_length(name) between 1 and 40),
+  color     text not null default '#FFAD00',
+  position  int  not null default 0,
+  kind      text not null default 'open' check (kind in ('open', 'won', 'lost'))
+);
 alter table public.stages add column if not exists meta_event text;
+alter table public.stages add column if not exists ga4_event text;
 alter table public.stages add column if not exists meta_value text not null default 'none';
 alter table public.stages drop constraint if exists stages_meta_value_check;
 alter table public.stages add constraint stages_meta_value_check check (meta_value in ('none', 'lead', 'contract'));
 
--- ---------- configuração do pixel / CAPI (linha única) ----------
+insert into public.stages (name, color, position, kind, meta_event, ga4_event, meta_value)
+select * from (values
+  ('Em análise',        '#6AA8FF', 0, 'open', null,              null,                   'none'),
+  ('Contato realizado', '#B58CFF', 1, 'open', 'LeadContatado',   'working_lead',         'none'),
+  ('Ligação',           '#4FD1C5', 2, 'open', null,              null,                   'none'),
+  ('Qualificado',       '#FFAD00', 3, 'open', 'LeadQualificado', 'qualify_lead',         'lead'),
+  ('Reunião agendada',  '#FF8A3D', 4, 'open', 'ReuniaoAgendada', 'reuniao_agendada',     'lead'),
+  ('Venda realizada',   '#3DDC84', 5, 'won',  'VendaRealizada',  'close_convert_lead',   'contract'),
+  ('Perdido',           '#6B6B6B', 6, 'lost', null,              'close_unconvert_lead', 'none')
+) v(name, color, position, kind, meta_event, ga4_event, meta_value)
+where not exists (select 1 from public.stages);
+
+create table if not exists public.labels (
+  id     uuid primary key default gen_random_uuid(),
+  name   text not null unique check (char_length(name) between 1 and 30),
+  color  text not null default '#FFAD00'
+);
+
+
+-- ============================================================
+-- 4. LEADS
+-- ============================================================
+create table if not exists public.leads (
+  id               uuid primary key default gen_random_uuid(),
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  last_activity_at timestamptz not null default now(),
+  form_id          text not null default 'manual',
+  form_name        text,
+  answers          jsonb not null default '[]'::jsonb,
+  nome             text not null check (char_length(nome) between 2 and 120),
+  whatsapp         text check (whatsapp is null or char_length(whatsapp) between 10 and 20),
+  email            text check (email is null or char_length(email) <= 160),
+  instagram        text check (instagram is null or char_length(instagram) <= 60),
+  faturamento      text,
+  stage_id         uuid references public.stages(id) on delete set null,
+  assigned_to      uuid references public.profiles(id) on delete set null,
+  label_ids        uuid[] not null default '{}',
+  valor            numeric(12,2),
+  reminder_at      timestamptz,
+  reminder_note    text,
+  source           text not null default 'organico',
+  utm_source       text,
+  utm_medium       text,
+  utm_campaign     text,
+  utm_content      text,
+  utm_term         text,
+  fbclid           text,
+  referrer         text,
+  user_agent       text,
+  session_id       text
+);
+-- localização e identificadores usados pela Meta e pelo Google
+alter table public.leads add column if not exists estado text;
+alter table public.leads add column if not exists cidade text;
+alter table public.leads add column if not exists visitor_id text;
+alter table public.leads add column if not exists fbp text;
+alter table public.leads add column if not exists fbc text;
+alter table public.leads add column if not exists gclid text;
+alter table public.leads add column if not exists gbraid text;
+alter table public.leads add column if not exists wbraid text;
+alter table public.leads add column if not exists ga_client_id text;
+alter table public.leads add column if not exists client_ip text;
+alter table public.leads add column if not exists event_source_url text;
+alter table public.leads add column if not exists lead_event_id text;
+alter table public.leads add column if not exists meta_lead_id text;
+alter table public.leads add column if not exists recovered_from uuid;   -- formulário incompleto que originou o lead
+alter table public.leads drop constraint if exists leads_source_check;
+alter table public.leads add constraint leads_source_check check (source in ('pago', 'organico', 'manual', 'api'));
+
+create index if not exists leads_created_idx on public.leads (created_at desc);
+create index if not exists leads_stage_idx on public.leads (stage_id);
+create index if not exists leads_whatsapp_idx on public.leads (whatsapp);
+create index if not exists leads_session_idx on public.leads (session_id);
+
+
+-- ============================================================
+-- 5. HISTÓRICO
+-- ============================================================
+create table if not exists public.lead_activity (
+  id          uuid primary key default gen_random_uuid(),
+  lead_id     uuid not null references public.leads(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  author_id   uuid references public.profiles(id) on delete set null,
+  author_name text,
+  type        text not null,
+  body        text not null check (char_length(body) between 1 and 1000)
+);
+alter table public.lead_activity drop constraint if exists lead_activity_type_check;
+alter table public.lead_activity add constraint lead_activity_type_check
+  check (type in ('created', 'note', 'stage', 'assign', 'label', 'reminder', 'edit', 'recovered'));
+create index if not exists lead_activity_idx on public.lead_activity (lead_id, created_at desc);
+
+
+-- ============================================================
+-- 6. FORMULÁRIO E RECUPERAÇÃO
+-- form_events: visitas, início e cada pergunta vista (funil de abandono).
+-- partial_leads: salvamento automático de cada resposta; vira lead ao concluir
+-- ou pode ser recuperado pela equipe.
+-- ============================================================
+create table if not exists public.form_events (
+  id           bigint generated always as identity primary key,
+  created_at   timestamptz not null default now(),
+  form_id      text not null check (char_length(form_id) <= 40),
+  session_id   text not null check (char_length(session_id) <= 60),
+  event        text not null check (event in ('view', 'start', 'step', 'submit')),
+  step_id      text check (char_length(step_id) <= 40),
+  utm_source   text check (char_length(utm_source) <= 100),
+  utm_campaign text check (char_length(utm_campaign) <= 150)
+);
+create index if not exists form_events_idx on public.form_events (form_id, created_at desc);
+
+create table if not exists public.partial_leads (
+  id               uuid primary key default gen_random_uuid(),
+  session_id       text not null unique check (char_length(session_id) between 8 and 60),
+  resume_token     uuid not null default gen_random_uuid() unique,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  form_id          text not null,
+  form_name        text,
+  answers          jsonb not null default '[]'::jsonb,   -- [{id, label, value}] pra exibir
+  raw              jsonb not null default '{}'::jsonb,   -- {campo: valor} pra retomar o form
+  nome             text,
+  whatsapp         text,
+  email            text,
+  instagram        text,
+  faturamento      text,
+  estado           text,
+  step_id          text,
+  step_index       int,
+  total_steps      int,
+  status           text not null default 'em_andamento'
+                   check (status in ('em_andamento', 'abandonado', 'convertido', 'recuperado', 'descartado')),
+  lead_id          uuid references public.leads(id) on delete set null,
+  contacted_at     timestamptz,
+  contacted_by     uuid references public.profiles(id) on delete set null,
+  abandoned_at     timestamptz,
+  visitor_id       text,
+  fbp              text,
+  fbc              text,
+  ga_client_id     text,
+  client_ip        text,
+  user_agent       text,
+  event_source_url text,
+  referrer         text,
+  utm_source       text,
+  utm_medium       text,
+  utm_campaign     text,
+  utm_content      text,
+  utm_term         text,
+  fbclid           text,
+  gclid            text
+);
+create index if not exists partial_leads_status_idx on public.partial_leads (status, updated_at desc);
+
+
+-- ============================================================
+-- 7. RASTREAMENTO
+-- tracking_settings: valores globais (valor do lead por faixa, moeda, meses de contrato).
+-- tracking_pixels: um registro por pixel (Meta, GA4, Google Ads), cada um com sua credencial.
+-- events (por pixel):
+--   page_view, view_content, form_start, form_step  → sinais do navegador (não são conversão)
+--   lead                                            → CONVERSÃO: formulário concluído
+--   funnel                                          → eventos do pipeline enviados pelo servidor
+-- ============================================================
 create table if not exists public.tracking_settings (
   id              int primary key default 1 check (id = 1),
-  enabled         boolean not null default false,
-  pixel_ids       text[] not null default '{1357841419671798,2142406153298000}',
-  access_token    text,
-  test_event_code text,
-  api_version     text not null default 'v21.0',
-  send_lead       boolean not null default true,
   currency        text not null default 'BRL',
   contract_months int not null default 12 check (contract_months between 1 and 60),
+  api_version     text not null default 'v21.0',
   lead_values     jsonb not null default '{"Menos de R$15.000": 50, "De R$15.000 a R$30.000": 100, "De R$30.000 a R$50.000": 200, "De R$50.000 a R$100.000": 400, "Acima de R$100.000": 800}',
   updated_at      timestamptz not null default now()
 );
+insert into public.tracking_settings (id) values (1) on conflict (id) do nothing;
 
--- mapeamento padrão só na primeira instalação
-do $$ begin
-  if not exists (select 1 from public.tracking_settings) then
-    update public.stages set meta_event = 'Contact' where name = 'Contato realizado';
-    update public.stages set meta_event = 'LeadQualificado', meta_value = 'lead' where name = 'Qualificado';
-    update public.stages set meta_event = 'Schedule', meta_value = 'lead' where name = 'Reunião agendada';
-    update public.stages set meta_event = 'Purchase', meta_value = 'contract' where name = 'Venda realizada';
-    insert into public.tracking_settings (id) values (1);
-  end if;
-end $$;
+create table if not exists public.tracking_pixels (
+  id               uuid primary key default gen_random_uuid(),
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now(),
+  name             text not null check (char_length(name) between 1 and 80),
+  platform         text not null check (platform in ('meta', 'ga4', 'google_ads')),
+  pixel_id         text not null check (char_length(pixel_id) between 4 and 40),
+  access_token     text,          -- Meta: token da Conversions API · GA4: api_secret do Measurement Protocol
+  conversion_label text,          -- Google Ads: rótulo da conversão (AW-XXX/rótulo)
+  test_event_code  text,          -- Meta: código de teste (Gerenciador de Eventos)
+  enabled          boolean not null default true,
+  mode             text not null default 'recommended' check (mode in ('recommended', 'custom')),
+  events           jsonb not null default '{"page_view": true, "view_content": true, "form_start": true, "form_step": false, "lead": true, "funnel": true}',
+  unique (platform, pixel_id)
+);
 
-create table if not exists public.capi_events (
+-- pixels da Tracto já instalados nas páginas (só navegador até colar o token)
+insert into public.tracking_pixels (name, platform, pixel_id)
+select * from (values ('Pixel Tracto 1', 'meta', '1357841419671798'), ('Pixel Tracto 2', 'meta', '2142406153298000')) v(name, platform, pixel_id)
+where not exists (select 1 from public.tracking_pixels);
+
+create table if not exists public.tracking_events (
   id          bigint generated always as identity primary key,
   created_at  timestamptz not null default now(),
-  lead_id     uuid references public.leads(id) on delete set null,
+  platform    text not null,
+  pixel_ref   uuid references public.tracking_pixels(id) on delete set null,
   pixel_id    text,
+  lead_id     uuid references public.leads(id) on delete set null,
   event_name  text,
   event_id    text,
   test        boolean not null default false,
@@ -404,22 +386,25 @@ create table if not exists public.capi_events (
   response    text,
   payload     jsonb
 );
-create index if not exists capi_events_idx on public.capi_events (created_at desc);
-create index if not exists capi_events_lead_idx on public.capi_events (lead_id);
+create index if not exists tracking_events_idx on public.tracking_events (created_at desc);
+create index if not exists tracking_events_lead_idx on public.tracking_events (lead_id);
+create index if not exists tracking_events_dedup_idx on public.tracking_events (pixel_ref, event_id);
 
--- ---------- chaves de API ----------
+
+-- ============================================================
+-- 8. INTEGRAÇÕES (API e webhooks)
+-- ============================================================
 create table if not exists public.api_keys (
   id           uuid primary key default gen_random_uuid(),
   created_at   timestamptz not null default now(),
   name         text not null check (char_length(name) between 1 and 60),
   prefix       text not null,
-  key_hash     text not null unique,
+  key_hash     text not null unique,        -- a chave em si nunca é guardada
   last_used_at timestamptz,
   revoked      boolean not null default false,
   created_by   uuid references public.profiles(id) on delete set null
 );
 
--- ---------- webhooks de saída ----------
 create table if not exists public.webhooks (
   id         uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
@@ -443,7 +428,51 @@ create table if not exists public.webhook_deliveries (
 );
 create index if not exists webhook_deliveries_idx on public.webhook_deliveries (created_at desc);
 
--- ---------- envio HTTP (pg_net) ----------
+
+-- ============================================================
+-- 9. REPRESENTAÇÕES JSON (webhooks e API)
+-- ============================================================
+create or replace function public.lead_json(l public.leads) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'id', l.id, 'criado_em', l.created_at, 'atualizado_em', l.updated_at,
+    'nome', l.nome, 'whatsapp', l.whatsapp, 'email', l.email, 'instagram', l.instagram,
+    'faturamento', l.faturamento, 'estado', l.estado, 'cidade', l.cidade, 'valor', l.valor,
+    'estagio', (select jsonb_build_object('id', s.id, 'nome', s.name, 'tipo', s.kind) from stages s where s.id = l.stage_id),
+    'responsavel', (select jsonb_build_object('id', p.id, 'nome', p.nome, 'email', p.email) from profiles p where p.id = l.assigned_to),
+    'rotulos', (select jsonb_agg(x.name) from labels x where x.id = any(l.label_ids)),
+    'formulario', jsonb_build_object('id', l.form_id, 'nome', l.form_name),
+    'respostas', l.answers, 'fonte', l.source, 'recuperado', l.recovered_from is not null,
+    'utm', jsonb_strip_nulls(jsonb_build_object('source', l.utm_source, 'medium', l.utm_medium, 'campaign', l.utm_campaign, 'content', l.utm_content, 'term', l.utm_term)),
+    'lembrete', l.reminder_at
+  ));
+$$;
+
+create or replace function public.partial_json(p public.partial_leads) returns jsonb
+language sql stable as $$
+  select jsonb_strip_nulls(jsonb_build_object(
+    'id', p.id, 'iniciado_em', p.created_at, 'atualizado_em', p.updated_at, 'status', p.status,
+    'nome', p.nome, 'whatsapp', p.whatsapp, 'email', p.email, 'instagram', p.instagram, 'faturamento', p.faturamento,
+    'formulario', jsonb_build_object('id', p.form_id, 'nome', p.form_name),
+    'progresso', jsonb_build_object('pergunta', p.step_id, 'respondidas', p.step_index, 'total', p.total_steps),
+    'respostas', p.answers,
+    'utm', jsonb_strip_nulls(jsonb_build_object('source', p.utm_source, 'medium', p.utm_medium, 'campaign', p.utm_campaign))
+  ));
+$$;
+
+-- valor enviado com o evento: estimado pela faixa de faturamento ou do contrato × meses
+create or replace function public.lead_value(l public.leads, p_mode text) returns numeric
+language sql stable security definer set search_path = public as $$
+  select case p_mode
+    when 'lead' then (select (lead_values->>l.faturamento)::numeric from tracking_settings where id = 1)
+    when 'contract' then l.valor * (select contract_months from tracking_settings where id = 1)
+  end;
+$$;
+
+
+-- ============================================================
+-- 10. ENVIOS
+-- ============================================================
 create or replace function public.http_post_json(p_url text, p_body jsonb, p_headers jsonb default '{}'::jsonb, p_params jsonb default '{}'::jsonb) returns bigint
 language plpgsql security definer set search_path = public as $$
 declare v_id bigint;
@@ -456,123 +485,202 @@ exception when others then
   return null;
 end $$;
 
--- ---------- representação do lead para webhooks/API ----------
-create or replace function public.lead_json(l public.leads) returns jsonb
-language sql stable security definer set search_path = public as $$
-  select jsonb_strip_nulls(jsonb_build_object(
-    'id', l.id, 'criado_em', l.created_at, 'atualizado_em', l.updated_at,
-    'nome', l.nome, 'whatsapp', l.whatsapp, 'email', l.email, 'instagram', l.instagram,
-    'faturamento', l.faturamento, 'estado', l.estado, 'cidade', l.cidade, 'valor', l.valor,
-    'estagio', (select jsonb_build_object('id', s.id, 'nome', s.name, 'tipo', s.kind) from stages s where s.id = l.stage_id),
-    'responsavel', (select jsonb_build_object('id', p.id, 'nome', p.nome, 'email', p.email) from profiles p where p.id = l.assigned_to),
-    'rotulos', (select jsonb_agg(x.name) from labels x where x.id = any(l.label_ids)),
-    'formulario', jsonb_build_object('id', l.form_id, 'nome', l.form_name),
-    'respostas', l.answers, 'fonte', l.source,
-    'utm', jsonb_strip_nulls(jsonb_build_object('source', l.utm_source, 'medium', l.utm_medium, 'campaign', l.utm_campaign, 'content', l.utm_content, 'term', l.utm_term)),
-    'lembrete', l.reminder_at
-  ));
-$$;
-
+-- ---------- webhooks ----------
 create or replace function public.webhook_fire(p_event text, p_lead_id uuid, p_data jsonb, p_only uuid default null) returns int
 language plpgsql security definer set search_path = public as $$
-declare
-  w record; v_body jsonb; v_del bigint; v_req bigint; n int := 0;
+declare w record; v_body jsonb; v_del bigint; v_req bigint; n int := 0;
 begin
   for w in select * from webhooks where active and (p_only is not null and id = p_only or p_only is null and p_event = any(events)) loop
     insert into webhook_deliveries (webhook_id, event, lead_id) values (w.id, p_event, p_lead_id) returning id into v_del;
     v_body := jsonb_build_object('id', v_del, 'evento', p_event, 'enviado_em', now(), 'dados', p_data);
     v_req := http_post_json(w.url, v_body, jsonb_build_object(
-      'X-Tracto-Event', p_event,
-      'X-Tracto-Delivery', v_del::text,
-      'X-Tracto-Signature', 'sha256=' || hmac_sha256(v_body::text, w.secret),
-      'User-Agent', 'Tracto-Webhooks/1.0'));
-    update webhook_deliveries set payload = v_body, request_id = v_req, response = case when v_req is null then 'pg_net indisponível' end where id = v_del;
+      'X-Tracto-Event', p_event, 'X-Tracto-Delivery', v_del::text,
+      'X-Tracto-Signature', 'sha256=' || hmac_sha256(v_body::text, w.secret), 'User-Agent', 'Tracto-Webhooks/1.0'));
+    update webhook_deliveries set payload = v_body, request_id = v_req,
+      response = case when v_req is null then 'pg_net indisponível' end where id = v_del;
     n := n + 1;
   end loop;
   return n;
 end $$;
 
 -- ---------- Meta Conversions API ----------
-create or replace function public.capi_send(p_lead_id uuid, p_event text, p_event_id text, p_value numeric default null,
-  p_action_source text default 'system_generated', p_test boolean default false) returns int
-language plpgsql security definer set search_path = public as $$
-declare
-  cfg tracking_settings; l leads; st stages; v_px text; v_event jsonb; v_user jsonb; v_custom jsonb;
-  v_body jsonb; v_req bigint; v_first text; v_last text; n int := 0; v_time bigint;
+create or replace function public.meta_user_data(l public.leads) returns jsonb
+language plpgsql stable as $$
+declare v_first text := nullif(split_part(btrim(l.nome), ' ', 1), ''); v_last text := nullif(regexp_replace(btrim(l.nome), '^\S+\s*', ''), '');
 begin
-  select * into cfg from tracking_settings where id = 1;
-  if cfg is null or cfg.access_token is null or coalesce(array_length(cfg.pixel_ids, 1), 0) = 0 then return 0; end if;
-  if not cfg.enabled and not p_test then return 0; end if;
-  select * into l from leads where id = p_lead_id;
-  if l is null then return 0; end if;
-  select * into st from stages where id = l.stage_id;
-
-  v_first := split_part(btrim(l.nome), ' ', 1);
-  v_last := nullif(regexp_replace(btrim(l.nome), '^\S+\s*', ''), '');
-  v_user := jsonb_strip_nulls(jsonb_build_object(
+  return jsonb_strip_nulls(jsonb_build_object(
     'em', case when l.email is not null then jsonb_build_array(meta_hash(l.email)) end,
-    'ph', case when l.whatsapp is not null then jsonb_build_array(meta_hash(regexp_replace(l.whatsapp, '\D', '', 'g'))) end,
-    'fn', case when v_first <> '' then jsonb_build_array(meta_hash(v_first)) end,
+    'ph', case when l.whatsapp is not null then jsonb_build_array(meta_hash(norm_phone(l.whatsapp))) end,
+    'fn', case when v_first is not null then jsonb_build_array(meta_hash(v_first)) end,
     'ln', case when v_last is not null then jsonb_build_array(meta_hash(split_part(v_last, ' ', -1))) end,
-    'st', case when l.estado is not null then jsonb_build_array(meta_hash(l.estado)) end,
+    'st', case when coalesce(l.estado, ddd_uf(l.whatsapp)) is not null then jsonb_build_array(meta_hash(coalesce(l.estado, ddd_uf(l.whatsapp)))) end,
     'ct', case when l.cidade is not null then jsonb_build_array(meta_hash(regexp_replace(l.cidade, '\s', '', 'g'))) end,
     'country', jsonb_build_array(meta_hash('br')),
-    'external_id', jsonb_build_array(meta_hash(l.id::text)),
+    'external_id', jsonb_build_array(meta_hash(coalesce(l.visitor_id, l.id::text))),
     'client_ip_address', l.client_ip,
     'client_user_agent', l.user_agent,
     'fbc', l.fbc,
     'fbp', l.fbp,
     'lead_id', case when l.meta_lead_id ~ '^\d+$' then l.meta_lead_id::numeric end
   ));
-  v_custom := jsonb_strip_nulls(jsonb_build_object(
-    'currency', cfg.currency,
-    'value', p_value,
-    'content_name', coalesce(l.form_name, l.form_id),
-    'content_category', 'lead',
-    'event_source', 'crm',
-    'lead_event_source', 'Tracto CRM',
-    'lead_stage', st.name,
-    'faturamento', l.faturamento,
-    'lead_score', (cfg.lead_values->>l.faturamento)::numeric,
-    'fonte', l.source,
-    'utm_source', l.utm_source, 'utm_medium', l.utm_medium, 'utm_campaign', l.utm_campaign, 'utm_content', l.utm_content
-  ));
-  -- Lead usa o horário real do envio do form; eventos do funil usam o horário da mudança
-  v_time := floor(extract(epoch from case when p_event = 'Lead' then l.created_at else now() end))::bigint;
+end $$;
+
+create or replace function public.meta_send(px public.tracking_pixels, l public.leads, p_event text, p_event_id text,
+  p_value numeric, p_action_source text, p_test boolean default false) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare cfg tracking_settings; st stages; v_event jsonb; v_body jsonb; v_req bigint;
+begin
+  if px.access_token is null then return false; end if;
+  if not p_test and exists (select 1 from tracking_events where pixel_ref = px.id and event_id = p_event_id and not test
+                            and coalesce(status_code, 200) between 200 and 299) then return false; end if;
+  select * into cfg from tracking_settings where id = 1;
+  select * into st from stages where id = l.stage_id;
   v_event := jsonb_strip_nulls(jsonb_build_object(
     'event_name', p_event,
-    'event_time', v_time,
+    'event_time', floor(extract(epoch from case when p_event = 'Lead' then l.created_at else now() end))::bigint,
     'event_id', p_event_id,
     'action_source', p_action_source,
     'event_source_url', case when p_action_source = 'website' then coalesce(l.event_source_url, 'https://assessoriatracto.com.br/aplicar/') end,
-    'user_data', v_user,
-    'custom_data', v_custom
+    'user_data', meta_user_data(l),
+    'custom_data', jsonb_strip_nulls(jsonb_build_object(
+      'currency', cfg.currency, 'value', p_value,
+      'content_name', coalesce(l.form_name, l.form_id), 'content_category', 'lead',
+      'event_source', 'crm', 'lead_event_source', 'Tracto CRM',
+      'lead_stage', st.name, 'faturamento', l.faturamento,
+      'lead_score', (cfg.lead_values->>l.faturamento)::numeric, 'fonte', l.source,
+      'utm_source', l.utm_source, 'utm_medium', l.utm_medium, 'utm_campaign', l.utm_campaign, 'utm_content', l.utm_content))
   ));
-  v_body := jsonb_strip_nulls(jsonb_build_object('data', jsonb_build_array(v_event),
-    'test_event_code', case when p_test or cfg.test_event_code is not null then cfg.test_event_code end));
+  v_body := jsonb_strip_nulls(jsonb_build_object('data', jsonb_build_array(v_event), 'test_event_code', px.test_event_code));
+  v_req := http_post_json('https://graph.facebook.com/' || cfg.api_version || '/' || px.pixel_id || '/events', v_body, '{}'::jsonb,
+                          jsonb_build_object('access_token', px.access_token));
+  insert into tracking_events (platform, pixel_ref, pixel_id, lead_id, event_name, event_id, test, request_id, payload, response)
+  values ('meta', px.id, px.pixel_id, l.id, p_event, p_event_id, p_test, v_req, v_body, case when v_req is null then 'pg_net indisponível' end);
+  return true;
+end $$;
 
-  foreach v_px in array cfg.pixel_ids loop
-    -- não reenvia o mesmo evento pro mesmo pixel (dedup também acontece na Meta por event_id)
-    if not p_test and exists (select 1 from capi_events where event_id = p_event_id and pixel_id = v_px and not test
-                              and coalesce(status_code, 200) between 200 and 299) then continue; end if;
-    v_req := http_post_json('https://graph.facebook.com/' || cfg.api_version || '/' || v_px || '/events', v_body, '{}'::jsonb,
-                            jsonb_build_object('access_token', cfg.access_token));
-    insert into capi_events (lead_id, pixel_id, event_name, event_id, test, request_id, payload, response)
-    values (l.id, v_px, p_event, p_event_id, p_test, v_req, v_body, case when v_req is null then 'pg_net indisponível' end);
-    n := n + 1;
+-- ---------- Google Analytics 4 (Measurement Protocol) ----------
+create or replace function public.ga4_send(px public.tracking_pixels, l public.leads, p_event text, p_event_id text,
+  p_value numeric, p_test boolean default false) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare cfg tracking_settings; st stages; v_body jsonb; v_req bigint;
+  v_first text := nullif(split_part(btrim(l.nome), ' ', 1), ''); v_last text := nullif(regexp_replace(btrim(l.nome), '^\S+\s*', ''), '');
+begin
+  if px.access_token is null then return false; end if;
+  if not p_test and exists (select 1 from tracking_events where pixel_ref = px.id and event_id = p_event_id and not test) then return false; end if;
+  select * into cfg from tracking_settings where id = 1;
+  select * into st from stages where id = l.stage_id;
+  v_body := jsonb_strip_nulls(jsonb_build_object(
+    'client_id', coalesce(l.ga_client_id, l.visitor_id, l.id::text),
+    'user_id', l.id::text,
+    'timestamp_micros', (floor(extract(epoch from now())) * 1000000)::bigint,
+    'user_data', jsonb_strip_nulls(jsonb_build_object(
+      'sha256_email_address', case when l.email is not null then jsonb_build_array(meta_hash(l.email)) end,
+      'sha256_phone_number', case when l.whatsapp is not null then jsonb_build_array(meta_hash('+' || norm_phone(l.whatsapp))) end,
+      'address', jsonb_build_array(jsonb_strip_nulls(jsonb_build_object(
+        'sha256_first_name', meta_hash(v_first), 'sha256_last_name', meta_hash(split_part(v_last, ' ', -1)),
+        'region', lower(coalesce(l.estado, ddd_uf(l.whatsapp))), 'country', 'BR'))))),
+    'events', jsonb_build_array(jsonb_build_object('name', p_event, 'params', jsonb_strip_nulls(jsonb_build_object(
+      'currency', cfg.currency, 'value', p_value, 'lead_source', l.source, 'form_name', coalesce(l.form_name, l.form_id),
+      'lead_stage', st.name, 'faturamento', l.faturamento, 'transaction_id', p_event_id,
+      'campaign', l.utm_campaign, 'source', l.utm_source, 'medium', l.utm_medium, 'engagement_time_msec', 1))))
+  ));
+  v_req := http_post_json('https://www.google-analytics.com/' || case when p_test then 'debug/mp/collect' else 'mp/collect' end, v_body, '{}'::jsonb,
+                          jsonb_build_object('measurement_id', px.pixel_id, 'api_secret', px.access_token));
+  insert into tracking_events (platform, pixel_ref, pixel_id, lead_id, event_name, event_id, test, request_id, payload, response)
+  values ('ga4', px.id, px.pixel_id, l.id, p_event, p_event_id, p_test, v_req, v_body, case when v_req is null then 'pg_net indisponível' end);
+  return true;
+end $$;
+
+-- ---------- despacho: decide o que vai pra cada pixel ----------
+-- p_kind 'lead'  → formulário concluído (conversão)
+-- p_kind 'stage' → lead entrou num estágio com evento configurado (sinal do funil)
+create or replace function public.track_lead(p_lead_id uuid, p_kind text, p_stage uuid default null) returns int
+language plpgsql security definer set search_path = public as $$
+declare l leads; st stages; px tracking_pixels; n int := 0;
+begin
+  select * into l from leads where id = p_lead_id;
+  if not found then return 0; end if;
+  if p_stage is not null then select * into st from stages where id = p_stage; end if;
+
+  for px in select * from tracking_pixels where enabled and access_token is not null loop
+    if p_kind = 'lead' and coalesce((px.events->>'lead')::boolean, true) and l.form_id <> 'manual' and l.recovered_from is null then
+      if px.platform = 'meta' then
+        n := n + meta_send(px, l, 'Lead', coalesce(l.lead_event_id, l.id::text), lead_value(l, 'lead'),
+               case when l.event_source_url is not null then 'website' else 'system_generated' end)::int;
+      elsif px.platform = 'ga4' and l.event_source_url is null then
+        -- leads do navegador já mandam generate_lead pelo gtag; aqui só os que chegam por API
+        n := n + ga4_send(px, l, 'generate_lead', coalesce(l.lead_event_id, l.id::text), lead_value(l, 'lead'))::int;
+      end if;
+    elsif p_kind = 'stage' and st.id is not null and coalesce((px.events->>'funnel')::boolean, true) then
+      if px.platform = 'meta' and st.meta_event is not null then
+        n := n + meta_send(px, l, st.meta_event, l.id::text || ':' || st.id::text, lead_value(l, st.meta_value), 'system_generated')::int;
+      elsif px.platform = 'ga4' and st.ga4_event is not null then
+        n := n + ga4_send(px, l, st.ga4_event, l.id::text || ':' || st.id::text, lead_value(l, st.meta_value))::int;
+      end if;
+    end if;
   end loop;
   return n;
 end $$;
 
-create or replace function public.lead_value(l public.leads, p_mode text) returns numeric
-language sql stable security definer set search_path = public as $$
-  select case p_mode
-    when 'lead' then (select (lead_values->>l.faturamento)::numeric from tracking_settings where id = 1)
-    when 'contract' then l.valor * (select contract_months from tracking_settings where id = 1)
-  end;
-$$;
 
--- ---------- gatilho único: webhooks + CAPI ----------
+-- ============================================================
+-- 11. GATILHOS
+-- ============================================================
+create or replace function public.touch_updated_at() returns trigger
+language plpgsql as $$ begin new.updated_at = now(); return new; end $$;
+
+drop trigger if exists tracking_pixels_touch on public.tracking_pixels;
+create trigger tracking_pixels_touch before update on public.tracking_pixels
+for each row execute function public.touch_updated_at();
+
+create or replace function public.leads_before_update() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at = now();
+  new.last_activity_at = now();
+  return new;
+end $$;
+drop trigger if exists leads_before_update on public.leads;
+create trigger leads_before_update before update on public.leads
+for each row execute function public.leads_before_update();
+
+-- histórico automático
+create or replace function public.leads_log_changes() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare who text := public.author_name();
+begin
+  if tg_op = 'INSERT' then
+    insert into lead_activity (lead_id, author_id, author_name, type, body)
+    values (new.id, auth.uid(), who, case when new.recovered_from is not null then 'recovered' else 'created' end,
+      case when new.recovered_from is not null then 'Recuperado de formulário incompleto: ' || coalesce(new.form_name, new.form_id)
+           when new.form_id = 'manual' then 'Lead criado manualmente'
+           when new.form_id = 'api' then 'Lead criado pela API'
+           else 'Formulário preenchido: ' || coalesce(new.form_name, new.form_id) end);
+    return new;
+  end if;
+  if new.stage_id is distinct from old.stage_id then
+    insert into lead_activity (lead_id, author_id, author_name, type, body)
+    values (new.id, auth.uid(), who, 'stage',
+      'Estágio: ' || coalesce((select name from stages where id = old.stage_id), 'sem estágio')
+      || ' → ' || coalesce((select name from stages where id = new.stage_id), 'sem estágio'));
+  end if;
+  if new.assigned_to is distinct from old.assigned_to then
+    insert into lead_activity (lead_id, author_id, author_name, type, body)
+    values (new.id, auth.uid(), who, 'assign', 'Atribuído a ' || coalesce((select nome from profiles where id = new.assigned_to), 'ninguém'));
+  end if;
+  if new.reminder_at is distinct from old.reminder_at then
+    insert into lead_activity (lead_id, author_id, author_name, type, body)
+    values (new.id, auth.uid(), who, 'reminder',
+      case when new.reminder_at is null then 'Lembrete removido'
+           else 'Lembrete para ' || to_char(new.reminder_at at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') end);
+  end if;
+  return new;
+end $$;
+drop trigger if exists leads_log_changes on public.leads;
+create trigger leads_log_changes after insert or update on public.leads
+for each row execute function public.leads_log_changes();
+
+-- webhooks + pixels (nunca bloqueia a gravação do lead)
 create or replace function public.leads_integrations() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare st stages; old_st stages; v_data jsonb;
@@ -580,19 +688,14 @@ begin
   begin
     if tg_op = 'DELETE' then
       perform webhook_fire('lead.deleted', old.id, jsonb_build_object('lead', lead_json(old)));
-      return old;
+      return null;
     end if;
     v_data := jsonb_build_object('lead', lead_json(new));
-
     if tg_op = 'INSERT' then
-      perform webhook_fire('lead.created', new.id, v_data);
-      if new.form_id <> 'manual' and (select send_lead from tracking_settings where id = 1) then
-        perform capi_send(new.id, 'Lead', coalesce(new.lead_event_id, new.id::text), lead_value(new, 'lead'),
-          case when new.event_source_url is not null then 'website' else 'system_generated' end);
-      end if;
-      return new;
+      perform webhook_fire(case when new.recovered_from is not null then 'lead.recovered' else 'lead.created' end, new.id, v_data);
+      perform track_lead(new.id, 'lead');
+      return null;
     end if;
-
     if new.stage_id is distinct from old.stage_id then
       select * into st from stages where id = new.stage_id;
       select * into old_st from stages where id = old.stage_id;
@@ -600,9 +703,7 @@ begin
       perform webhook_fire('lead.stage_changed', new.id, v_data);
       if st.kind = 'won' then perform webhook_fire('lead.won', new.id, v_data); end if;
       if st.kind = 'lost' then perform webhook_fire('lead.lost', new.id, v_data); end if;
-      if st.meta_event is not null then
-        perform capi_send(new.id, st.meta_event, new.id::text || ':' || st.id::text, lead_value(new, st.meta_value));
-      end if;
+      perform track_lead(new.id, 'stage', new.stage_id);
     end if;
     if new.assigned_to is distinct from old.assigned_to then perform webhook_fire('lead.assigned', new.id, v_data); end if;
     if (new.nome, new.whatsapp, new.email, new.instagram, new.faturamento, new.valor, new.label_ids)
@@ -614,72 +715,156 @@ begin
   end;
   return null;
 end $$;
-
 drop trigger if exists leads_integrations on public.leads;
 create trigger leads_integrations after insert or update or delete on public.leads
 for each row execute function public.leads_integrations();
 
-create or replace function public.activity_integrations() returns trigger
+create or replace function public.activity_after_insert() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if new.type = 'note' then
+    update leads set last_activity_at = now() where id = new.lead_id;
     begin
-      perform webhook_fire('note.created', new.lead_id, jsonb_build_object('nota', jsonb_build_object('texto', new.body, 'autor', new.author_name, 'criada_em', new.created_at),
+      perform webhook_fire('note.created', new.lead_id, jsonb_build_object(
+        'nota', jsonb_build_object('texto', new.body, 'autor', new.author_name, 'criada_em', new.created_at),
         'lead', (select lead_json(l) from leads l where l.id = new.lead_id)));
     exception when others then raise warning 'webhook de nota falhou: %', sqlerrm; end;
   end if;
   return new;
 end $$;
-
+drop trigger if exists activity_touch_lead on public.lead_activity;
 drop trigger if exists activity_integrations on public.lead_activity;
-create trigger activity_integrations after insert on public.lead_activity
-for each row execute function public.activity_integrations();
+drop trigger if exists activity_after_insert on public.lead_activity;
+create trigger activity_after_insert after insert on public.lead_activity
+for each row execute function public.activity_after_insert();
 
--- ---------- RPCs da equipe ----------
-create or replace function public.create_api_key(p_name text) returns text
-language plpgsql security definer set search_path = public as $$
-declare v_key text := 'trk_' || replace(gen_random_uuid()::text, '-', '') || substr(replace(gen_random_uuid()::text, '-', ''), 1, 16);
-begin
-  if not is_team() then raise exception 'sem permissão'; end if;
-  insert into api_keys (name, prefix, key_hash, created_by)
-  values (left(btrim(p_name), 60), left(v_key, 12), encode(sha256(convert_to(v_key, 'UTF8')), 'hex'), auth.uid());
-  return v_key; -- mostrado uma única vez
-end $$;
-
-create or replace function public.webhook_test(p_id uuid) returns int
-language plpgsql security definer set search_path = public as $$
-declare l leads;
-begin
-  if not is_team() then raise exception 'sem permissão'; end if;
-  select * into l from leads order by created_at desc limit 1;
-  return webhook_fire('webhook.test', l.id, jsonb_build_object('teste', true, 'lead', case when l.id is not null then lead_json(l) end), p_id);
-end $$;
-
-create or replace function public.capi_test() returns int
-language plpgsql security definer set search_path = public as $$
-declare l leads;
-begin
-  if not is_team() then raise exception 'sem permissão'; end if;
-  select * into l from leads where form_id <> 'manual' order by created_at desc limit 1;
-  if l.id is null then raise exception 'crie ou receba ao menos um lead pra testar'; end if;
-  return capi_send(l.id, 'Lead', 'teste-' || gen_random_uuid()::text, lead_value(l, 'lead'), 'website', true);
-end $$;
-
--- lê as respostas HTTP que o pg_net recebeu e grava nos logs
-create or replace function public.integrations_refresh() returns void
+create or replace function public.labels_cleanup() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if not is_team() then raise exception 'sem permissão'; end if;
-  execute $q$
-    update public.webhook_deliveries d set status_code = coalesce(r.status_code, 0), response = left(coalesce(r.error_msg, r.content::text), 500)
-    from net._http_response r where r.id = d.request_id and d.status_code is null;
-    update public.capi_events e set status_code = coalesce(r.status_code, 0), response = left(coalesce(r.error_msg, r.content::text), 800)
-    from net._http_response r where r.id = e.request_id and e.status_code is null;
-  $q$;
-exception when undefined_table or invalid_schema_name then null;
+  update leads set label_ids = array_remove(label_ids, old.id) where old.id = any(label_ids);
+  return old;
+end $$;
+drop trigger if exists labels_cleanup on public.labels;
+create trigger labels_cleanup after delete on public.labels
+for each row execute function public.labels_cleanup();
+
+
+-- ============================================================
+-- 12. RPCs PÚBLICAS (visitante do site e API)
+-- ============================================================
+
+-- envio final do formulário (vira lead no pipeline)
+create or replace function public.submit_lead(p jsonb) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_nome   text := left(btrim(p->>'nome'), 120);
+  v_wpp    text := norm_phone(p->>'whatsapp');
+  v_email  text := nullif(lower(btrim(p->>'email')), '');
+  v_insta  text := nullif(lower(regexp_replace(coalesce(p->>'instagram', ''), '[@\s]', '', 'g')), '');
+  v_medium text := lower(coalesce(p->>'utm_medium', ''));
+  v_uf     text;
+  v_id     uuid;
+begin
+  if v_nome is null or char_length(v_nome) < 2 then raise exception 'nome obrigatório'; end if;
+  if v_wpp is null or char_length(v_wpp) > 15 then raise exception 'whatsapp inválido'; end if;
+  if v_email is not null and v_email !~ '^[^\s@]+@[^\s@]+\.[^\s@]{2,}$' then v_email := null; end if;
+  if jsonb_typeof(coalesce(p->'answers', '[]'::jsonb)) <> 'array' or pg_column_size(p->'answers') > 20000 then raise exception 'respostas inválidas'; end if;
+  v_uf := coalesce(nullif(left(upper(btrim(p->>'estado')), 2), ''), ddd_uf(v_wpp));
+
+  -- reenvio do mesmo WhatsApp no mesmo form em 10 min: atualiza em vez de duplicar
+  select id into v_id from leads
+  where whatsapp = v_wpp and form_id = p->>'form_id' and created_at > now() - interval '10 minutes'
+  order by created_at desc limit 1;
+
+  if v_id is not null then
+    update leads set answers = coalesce(p->'answers', answers), nome = v_nome, email = coalesce(v_email, email),
+      instagram = coalesce(v_insta, instagram), faturamento = coalesce(p->>'faturamento', faturamento)
+    where id = v_id;
+  else
+    insert into leads (form_id, form_name, answers, nome, whatsapp, email, instagram, faturamento, estado, cidade,
+      stage_id, source, utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, gclid, gbraid, wbraid,
+      referrer, user_agent, session_id, visitor_id, fbp, fbc, ga_client_id, client_ip, event_source_url, lead_event_id, meta_lead_id)
+    values (
+      left(coalesce(p->>'form_id', 'desconhecido'), 40), left(p->>'form_name', 120), coalesce(p->'answers', '[]'::jsonb),
+      v_nome, v_wpp, v_email, left(v_insta, 60), left(p->>'faturamento', 60), v_uf, left(p->>'cidade', 80),
+      (select id from stages where kind = 'open' order by position limit 1),
+      case when coalesce(nullif(p->>'fbclid', ''), nullif(p->>'fbc', ''), nullif(p->>'gclid', ''), nullif(p->>'gbraid', ''), nullif(p->>'wbraid', '')) is not null
+             or v_medium in ('cpc', 'ppc', 'paid', 'paid_social', 'ads', 'ad', 'pago') then 'pago' else 'organico' end,
+      left(p->>'utm_source', 100), left(p->>'utm_medium', 100), left(p->>'utm_campaign', 150),
+      left(p->>'utm_content', 150), left(p->>'utm_term', 150), left(p->>'fbclid', 300),
+      left(p->>'gclid', 300), left(p->>'gbraid', 300), left(p->>'wbraid', 300),
+      left(p->>'referrer', 300), left(p->>'user_agent', 300), left(p->>'session_id', 60), left(p->>'visitor_id', 60),
+      left(p->>'fbp', 120), left(p->>'fbc', 400), coalesce(left(p->>'ga_client_id', 60), ga_client_id(p->>'ga_cookie')),
+      request_ip(), left(p->>'event_source_url', 500),
+      left(coalesce(nullif(p->>'lead_event_id', ''), gen_random_uuid()::text), 60), left(p->>'meta_lead_id', 40)
+    )
+    returning id into v_id;
+  end if;
+
+  -- o rascunho salvo automaticamente vira "convertido"
+  if nullif(p->>'session_id', '') is not null then
+    update partial_leads set status = 'convertido', lead_id = v_id, updated_at = now()
+    where session_id = p->>'session_id' and status <> 'recuperado';
+  end if;
+  return v_id;
 end $$;
 
--- ---------- API pública (autenticada por chave trk_...) ----------
+-- salvamento automático: cada resposta atualiza o rascunho da sessão
+create or replace function public.save_partial(p jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_sid   text := left(btrim(p->>'session_id'), 60);
+  v_email text := nullif(lower(btrim(p->>'email')), '');
+begin
+  if v_sid is null or char_length(v_sid) < 8 then raise exception 'sessão inválida'; end if;
+  if pg_column_size(p) > 40000 then raise exception 'rascunho grande demais'; end if;
+  if v_email is not null and v_email !~ '^[^\s@]+@[^\s@]+\.[^\s@]{2,}$' then v_email := null; end if;
+
+  insert into partial_leads as pl (session_id, form_id, form_name, answers, raw, nome, whatsapp, email, instagram, faturamento, estado,
+    step_id, step_index, total_steps, visitor_id, fbp, fbc, ga_client_id, client_ip, user_agent, event_source_url, referrer,
+    utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, gclid)
+  values (v_sid, left(coalesce(p->>'form_id', 'desconhecido'), 40), left(p->>'form_name', 120),
+    coalesce(p->'answers', '[]'::jsonb), coalesce(p->'raw', '{}'::jsonb),
+    nullif(left(btrim(p->>'nome'), 120), ''), norm_phone(p->>'whatsapp'), v_email,
+    nullif(lower(regexp_replace(coalesce(p->>'instagram', ''), '[@\s]', '', 'g')), ''), left(p->>'faturamento', 60),
+    coalesce(nullif(left(upper(btrim(p->>'estado')), 2), ''), ddd_uf(p->>'whatsapp')),
+    left(p->>'step_id', 40), (p->>'step_index')::int, (p->>'total_steps')::int,
+    left(p->>'visitor_id', 60), left(p->>'fbp', 120), left(p->>'fbc', 400),
+    coalesce(left(p->>'ga_client_id', 60), ga_client_id(p->>'ga_cookie')), request_ip(), left(p->>'user_agent', 300),
+    left(p->>'event_source_url', 500), left(p->>'referrer', 300),
+    left(p->>'utm_source', 100), left(p->>'utm_medium', 100), left(p->>'utm_campaign', 150), left(p->>'utm_content', 150),
+    left(p->>'utm_term', 150), left(p->>'fbclid', 300), left(p->>'gclid', 300))
+  on conflict (session_id) do update set
+    answers = excluded.answers, raw = excluded.raw,
+    nome = coalesce(excluded.nome, pl.nome), whatsapp = coalesce(excluded.whatsapp, pl.whatsapp),
+    email = coalesce(excluded.email, pl.email), instagram = coalesce(excluded.instagram, pl.instagram),
+    faturamento = coalesce(excluded.faturamento, pl.faturamento), estado = coalesce(excluded.estado, pl.estado),
+    step_id = excluded.step_id, step_index = excluded.step_index, total_steps = excluded.total_steps,
+    fbp = coalesce(excluded.fbp, pl.fbp), fbc = coalesce(excluded.fbc, pl.fbc),
+    ga_client_id = coalesce(excluded.ga_client_id, pl.ga_client_id), client_ip = coalesce(excluded.client_ip, pl.client_ip),
+    updated_at = now(),
+    status = case when pl.status = 'abandonado' then 'em_andamento' else pl.status end
+  where pl.status in ('em_andamento', 'abandonado');
+end $$;
+
+-- link de retomada enviado na recuperação: devolve as respostas pra preencher o form
+create or replace function public.get_partial(p_token uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('session_id', session_id, 'form_id', form_id, 'raw', raw, 'step_id', step_id)
+  from partial_leads where resume_token = p_token and status in ('em_andamento', 'abandonado');
+$$;
+
+-- configuração pública dos pixels (sem tokens) pro formulário carregar
+create or replace function public.public_tracking() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'pixels', coalesce((select jsonb_agg(jsonb_build_object('platform', platform, 'id', pixel_id, 'label', conversion_label, 'events', events) order by created_at)
+                        from tracking_pixels where enabled), '[]'::jsonb),
+    'currency', s.currency, 'lead_values', s.lead_values)
+  from tracking_settings s where s.id = 1;
+$$;
+
+-- ---------- API (chave trk_…) ----------
 create or replace function public.api_key_check(p_key text) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare v_id uuid;
@@ -693,18 +878,15 @@ end $$;
 
 create or replace function public.api_create_lead(api_key text, lead jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare v_id uuid; v_stage uuid; v_answers jsonb;
+declare v_id uuid; v_stage uuid;
 begin
   perform api_key_check(api_key);
-  v_answers := coalesce(lead->'respostas', lead->'answers', '[]'::jsonb);
   v_id := submit_lead(lead || jsonb_build_object(
-    'form_id', coalesce(lead->>'form_id', 'api'),
-    'form_name', coalesce(lead->>'form_name', 'API'),
-    'answers', v_answers));
+    'form_id', coalesce(lead->>'form_id', 'api'), 'form_name', coalesce(lead->>'form_name', 'API'),
+    'answers', coalesce(lead->'respostas', lead->'answers', '[]'::jsonb), 'session_id', null));
   select id into v_stage from stages where lower(name) = lower(lead->>'estagio');
   update leads set source = case when source = 'organico' then 'api' else source end,
-    stage_id = coalesce(v_stage, stage_id),
-    valor = coalesce((lead->>'valor')::numeric, valor)
+    stage_id = coalesce(v_stage, stage_id), valor = coalesce((lead->>'valor')::numeric, valor)
   where id = v_id;
   return jsonb_build_object('ok', true, 'id', v_id);
 end $$;
@@ -740,31 +922,191 @@ begin
   return jsonb_build_object('ok', true, 'lead', lead_json(l));
 end $$;
 
-revoke all on function public.api_create_lead(text, jsonb) from public;
-revoke all on function public.api_list_leads(text, timestamptz, int) from public;
-revoke all on function public.api_update_lead(text, uuid, jsonb) from public;
-grant execute on function public.api_create_lead(text, jsonb) to anon, authenticated;
-grant execute on function public.api_list_leads(text, timestamptz, int) to anon, authenticated;
-grant execute on function public.api_update_lead(text, uuid, jsonb) to anon, authenticated;
--- funções internas não ficam expostas como RPC
-revoke all on function public.capi_send(uuid, text, text, numeric, text, boolean) from public, anon, authenticated;
-revoke all on function public.webhook_fire(text, uuid, jsonb, uuid) from public, anon, authenticated;
-revoke all on function public.http_post_json(text, jsonb, jsonb, jsonb) from public, anon, authenticated;
-revoke all on function public.api_key_check(text) from public, anon, authenticated;
-revoke all on function public.lead_json(public.leads) from public, anon, authenticated;
-revoke all on function public.lead_value(public.leads, text) from public, anon, authenticated;
 
--- ---------- RLS ----------
+-- ============================================================
+-- 13. RPCs DA EQUIPE
+-- ============================================================
+create or replace function public.create_api_key(p_name text) returns text
+language plpgsql security definer set search_path = public as $$
+declare v_key text := 'trk_' || replace(gen_random_uuid()::text, '-', '') || substr(replace(gen_random_uuid()::text, '-', ''), 1, 16);
+begin
+  if not is_team() then raise exception 'sem permissão'; end if;
+  insert into api_keys (name, prefix, key_hash, created_by)
+  values (left(btrim(p_name), 60), left(v_key, 12), encode(sha256(convert_to(v_key, 'UTF8')), 'hex'), auth.uid());
+  return v_key;  -- mostrada uma única vez
+end $$;
+
+create or replace function public.webhook_test(p_id uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare l leads;
+begin
+  if not is_team() then raise exception 'sem permissão'; end if;
+  select * into l from leads order by created_at desc limit 1;
+  return webhook_fire('webhook.test', l.id, jsonb_build_object('teste', true, 'lead', case when l.id is not null then lead_json(l) end), p_id);
+end $$;
+
+-- evento de teste pra um pixel (Meta exige código de teste; GA4 vai pro endpoint de validação)
+create or replace function public.tracking_test(p_pixel uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare px tracking_pixels; l leads;
+begin
+  if not is_team() then raise exception 'sem permissão'; end if;
+  select * into px from tracking_pixels where id = p_pixel;
+  if not found then raise exception 'pixel não encontrado'; end if;
+  if px.access_token is null then raise exception 'cole o token/API secret do pixel antes de testar'; end if;
+  select * into l from leads where form_id <> 'manual' order by created_at desc limit 1;
+  if l.id is null then raise exception 'receba ou crie ao menos um lead pra testar'; end if;
+  if px.platform = 'meta' then
+    if px.test_event_code is null then raise exception 'preencha o código de evento de teste do Gerenciador de Eventos'; end if;
+    return meta_send(px, l, 'Lead', 'teste-' || gen_random_uuid()::text, lead_value(l, 'lead'), 'website', true)::int;
+  elsif px.platform = 'ga4' then
+    return ga4_send(px, l, 'generate_lead', 'teste-' || gen_random_uuid()::text, lead_value(l, 'lead'), true)::int;
+  end if;
+  raise exception 'Google Ads é testado pelo Tag Assistant, direto no formulário';
+end $$;
+
+-- lê as respostas HTTP do pg_net e grava nos logs
+create or replace function public.integrations_refresh() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not is_team() then raise exception 'sem permissão'; end if;
+  execute $q$
+    update public.webhook_deliveries d set status_code = coalesce(r.status_code, 0), response = left(coalesce(r.error_msg, r.content::text), 500)
+    from net._http_response r where r.id = d.request_id and d.status_code is null;
+    update public.tracking_events e set status_code = coalesce(r.status_code, 0), response = left(coalesce(r.error_msg, r.content::text), 800)
+    from net._http_response r where r.id = e.request_id and e.status_code is null;
+  $q$;
+exception when undefined_table or invalid_schema_name then null;
+end $$;
+
+-- marca como abandonados os rascunhos parados há 30 min e avisa por webhook (roda a cada 10 min)
+create or replace function public.partials_sweep() returns int
+language plpgsql security definer set search_path = public as $$
+declare p partial_leads; n int := 0;
+begin
+  if auth.uid() is not null and not is_team() then raise exception 'sem permissão'; end if;
+  for p in update partial_leads set status = 'abandonado', abandoned_at = now()
+           where status = 'em_andamento' and updated_at < now() - interval '30 minutes'
+           returning * loop
+    n := n + 1;
+    if p.whatsapp is not null or p.email is not null then
+      begin perform webhook_fire('lead.abandoned', null, jsonb_build_object('formulario_incompleto', partial_json(p)));
+      exception when others then raise warning 'webhook de abandono falhou: %', sqlerrm; end;
+    end if;
+  end loop;
+  return n;
+end $$;
+
+-- recuperação: transforma um formulário incompleto em lead do pipeline
+-- (não conta como conversão na Meta/Google: o formulário não foi concluído)
+create or replace function public.convert_partial(p_id uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare p partial_leads; v_id uuid;
+begin
+  if not is_team() then raise exception 'sem permissão'; end if;
+  select * into p from partial_leads where id = p_id for update;
+  if not found then raise exception 'rascunho não encontrado'; end if;
+  if p.lead_id is not null then return p.lead_id; end if;
+  if p.nome is null or char_length(p.nome) < 2 then raise exception 'o rascunho precisa ter pelo menos o nome'; end if;
+  insert into leads (form_id, form_name, answers, nome, whatsapp, email, instagram, faturamento, estado, stage_id, source,
+    utm_source, utm_medium, utm_campaign, utm_content, utm_term, fbclid, gclid, referrer, user_agent, session_id, visitor_id,
+    fbp, fbc, ga_client_id, client_ip, event_source_url, recovered_from, assigned_to)
+  values (p.form_id, p.form_name, p.answers, p.nome, p.whatsapp, p.email, p.instagram, p.faturamento, p.estado,
+    (select id from stages where kind = 'open' order by position limit 1),
+    case when coalesce(p.fbclid, p.fbc, p.gclid) is not null or lower(coalesce(p.utm_medium, '')) in ('cpc', 'ppc', 'paid', 'paid_social', 'ads', 'ad', 'pago') then 'pago' else 'organico' end,
+    p.utm_source, p.utm_medium, p.utm_campaign, p.utm_content, p.utm_term, p.fbclid, p.gclid, p.referrer, p.user_agent,
+    p.session_id, p.visitor_id, p.fbp, p.fbc, p.ga_client_id, p.client_ip, p.event_source_url, p.id, auth.uid())
+  returning id into v_id;
+  update partial_leads set status = 'recuperado', lead_id = v_id, updated_at = now() where id = p.id;
+  return v_id;
+end $$;
+
+
+-- ============================================================
+-- 14. PERMISSÕES
+-- Visitante (anon): só submit_lead, save_partial, get_partial, public_tracking e a API por chave.
+-- ============================================================
+do $$
+declare f text;
+begin
+  -- funções internas: ninguém chama direto pela API
+  foreach f in array array[
+    'hmac_sha256(text, text)', 'meta_hash(text)', 'norm_phone(text)', 'ddd_uf(text)', 'request_ip()', 'ga_client_id(text)',
+    'lead_json(public.leads)', 'partial_json(public.partial_leads)', 'lead_value(public.leads, text)',
+    'http_post_json(text, jsonb, jsonb, jsonb)', 'webhook_fire(text, uuid, jsonb, uuid)', 'meta_user_data(public.leads)',
+    'meta_send(public.tracking_pixels, public.leads, text, text, numeric, text, boolean)',
+    'ga4_send(public.tracking_pixels, public.leads, text, text, numeric, boolean)', 'track_lead(uuid, text, uuid)', 'api_key_check(text)'
+  ] loop
+    execute format('revoke all on function public.%s from public, anon, authenticated', f);
+  end loop;
+  -- públicas
+  foreach f in array array['submit_lead(jsonb)', 'save_partial(jsonb)', 'get_partial(uuid)', 'public_tracking()',
+    'api_create_lead(text, jsonb)', 'api_list_leads(text, timestamptz, int)', 'api_update_lead(text, uuid, jsonb)'] loop
+    execute format('revoke all on function public.%s from public', f);
+    execute format('grant execute on function public.%s to anon, authenticated', f);
+  end loop;
+  -- só equipe logada (checam is_team por dentro)
+  foreach f in array array['create_api_key(text)', 'webhook_test(uuid)', 'tracking_test(uuid)', 'integrations_refresh()',
+    'partials_sweep()', 'convert_partial(uuid)'] loop
+    execute format('revoke all on function public.%s from public, anon', f);
+    execute format('grant execute on function public.%s to authenticated', f);
+  end loop;
+end $$;
+
+
+-- ============================================================
+-- 15. RLS
+-- ============================================================
+alter table public.profiles           enable row level security;
+alter table public.stages             enable row level security;
+alter table public.labels             enable row level security;
+alter table public.leads              enable row level security;
+alter table public.lead_activity      enable row level security;
+alter table public.form_events        enable row level security;
+alter table public.partial_leads      enable row level security;
 alter table public.tracking_settings  enable row level security;
-alter table public.capi_events        enable row level security;
+alter table public.tracking_pixels    enable row level security;
+alter table public.tracking_events    enable row level security;
 alter table public.api_keys           enable row level security;
 alter table public.webhooks           enable row level security;
 alter table public.webhook_deliveries enable row level security;
+
 do $$
 declare t text;
 begin
-  foreach t in array array['tracking_settings', 'capi_events', 'api_keys', 'webhooks', 'webhook_deliveries'] loop
+  foreach t in array array['stages', 'labels', 'leads', 'lead_activity', 'partial_leads', 'tracking_settings', 'tracking_pixels',
+                           'tracking_events', 'api_keys', 'webhooks', 'webhook_deliveries'] loop
     execute format('drop policy if exists "equipe" on public.%I', t);
     execute format('create policy "equipe" on public.%I for all to authenticated using (public.is_team()) with check (public.is_team())', t);
   end loop;
 end $$;
+
+drop policy if exists "equipe le perfis" on public.profiles;
+create policy "equipe le perfis" on public.profiles for select to authenticated using (public.is_team() or id = auth.uid());
+drop policy if exists "equipe edita perfis" on public.profiles;
+create policy "equipe edita perfis" on public.profiles for update to authenticated using (public.is_team()) with check (public.is_team());
+
+drop policy if exists "anon registra evento" on public.form_events;
+create policy "anon registra evento" on public.form_events for insert to anon, authenticated with check (true);
+drop policy if exists "equipe le eventos" on public.form_events;
+create policy "equipe le eventos" on public.form_events for select to authenticated using (public.is_team());
+
+
+-- ============================================================
+-- 16. REALTIME E AGENDAMENTOS
+-- ============================================================
+do $$ begin alter publication supabase_realtime add table public.leads; exception when duplicate_object or undefined_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table public.partial_leads; exception when duplicate_object or undefined_object then null; end $$;
+
+do $$
+begin
+  perform cron.schedule('tracto-partials-sweep', '*/10 * * * *', 'select public.partials_sweep()');
+exception when others then raise notice 'agendamento indisponível (%); o CRM marca os abandonados ao abrir a aba Recuperação', sqlerrm;
+end $$;
+
+-- limpeza de versões antigas deste schema
+drop table if exists public.capi_events;
+drop function if exists public.capi_send(uuid, text, text, numeric, text, boolean);
+drop function if exists public.capi_test();
+drop function if exists public.activity_touch_lead();
+drop function if exists public.activity_integrations();
