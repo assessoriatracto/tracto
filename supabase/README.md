@@ -17,12 +17,14 @@ Sem Supabase configurado, form e CRM rodam em modo demo só no localhost. Em pro
 
 ## Ligar o Supabase
 
-1. Crie um projeto em supabase.com (região São Paulo).
-2. SQL Editor > New query > cole `supabase/schema.sql` > Run. Pode rodar de novo quando atualizar o arquivo.
+1. Crie um projeto em supabase.com (região South America, São Paulo).
+2. SQL Editor > New query > cole `supabase/schema.sql` > Run. Pode rodar de novo a cada atualização do arquivo.
 3. Project Settings > API: copie a Project URL e a anon public key para `assets/js/tracto-config.js`.
-4. Authentication > Sign In / Providers: desligue "Allow new users to sign up".
-5. Authentication > URL Configuration: Site URL `https://crm.assessoriatracto.com.br`.
-6. Authentication > Users > Add user: crie seu login. O primeiro usuário vira ativo automaticamente; os próximos entram inativos e você libera em CRM > Ajustes > Equipe.
+4. Authentication > Sign In / Providers > Email: deixe **Enable sign ups** e **Confirm email** ligados (o cadastro do CRM exige confirmação e aprovação de um admin).
+5. Authentication > URL Configuration: Site URL `https://crm.assessoriatracto.com.br` e em Redirect URLs adicione `https://crm.assessoriatracto.com.br/**`.
+6. Authentication > Multi-Factor: deixe TOTP habilitado (vem ligado) pra quem quiser ativar a verificação em duas etapas.
+7. Crie sua conta em `https://crm.assessoriatracto.com.br/#/cadastro`. A primeira conta vira admin ativa automaticamente.
+8. Database > Extensions: confira se **pg_net** e **pg_cron** estão ativas (o schema tenta ativar sozinho).
 
 ## Integrações e Pixel (CRM)
 

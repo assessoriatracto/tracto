@@ -20,7 +20,7 @@ cred() { git -c credential.helper= -c "credential.helper=!f() { echo username=x-
 cred clone --quiet --depth 1 "$REPO" "$DEST" 2>/dev/null || { mkdir -p "$DEST"; git -C "$DEST" init --quiet -b main; git -C "$DEST" remote add origin "$REPO"; }
 find "$DEST" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 
-cp "$ROOT"/crm/{index.html,crm.css,app.js,util.js,dashboard.js,admin.js} "$DEST"/
+cp "$ROOT"/crm/index.html "$ROOT"/crm/crm.css "$ROOT"/crm/*.js "$DEST"/
 # caminhos ../assets/ viram o domínio principal (CSS, fontes, logo, config e o import map @shared/)
 VER="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || date +%s)"
 perl -pi -e "s#\.\./assets/#$SITE/assets/#g; s#\?v=dev#?v=$VER#g" "$DEST/index.html"

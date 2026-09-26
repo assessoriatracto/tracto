@@ -4,7 +4,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 const cfg = window.TRACTO_CONFIG || {};
 export const LIVE = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
-const sb = LIVE ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
+const sb = LIVE ? createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { flowType: 'pkce', persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
 
 const must = ({ data, error }) => { if (error) throw error; return data; };
 const now = () => new Date().toISOString();
@@ -105,6 +105,74 @@ const live = {
   async listDeliveries(limit = 60) { return must(await sb.from('webhook_deliveries').select('id,created_at,webhook_id,event,lead_id,status_code,response,payload').order('id', { ascending: false }).limit(limit)); },
   async refreshIntegrations() { try { await sb.rpc('integrations_refresh'); } catch (e) {} },
 
+
+  // ---------- autenticação (login, cadastro, senha, 2FA) ----------
+  async signUp({ email, password, nome, consentVersion }) {
+    return must(await sb.auth.signUp({ email, password, options: {
+      emailRedirectTo: location.origin + location.pathname + '#/confirmado',
+      data: { nome, consent_at: new Date().toISOString(), consent_version: consentVersion } } }));
+  },
+  async resetPassword(email) { return must(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + '#/redefinir' })); },
+  async updatePassword(password) { return must(await sb.auth.updateUser({ password })); },
+  async resendConfirmation(email) { return must(await sb.auth.resend({ type: 'signup', email })); },
+  onAuth(cb) { return sb.auth.onAuthStateChange((event, session) => cb(event, session)); },
+  async mfaFactors() { return must(await sb.auth.mfa.listFactors()).totp || []; },
+  async mfaAal() { return must(await sb.auth.mfa.getAuthenticatorAssuranceLevel()); },
+  async mfaEnroll() { return must(await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Tracto CRM ' + new Date().toISOString().slice(0, 10) })); },
+  async mfaVerify(factorId, code) {
+    const ch = must(await sb.auth.mfa.challenge({ factorId }));
+    return must(await sb.auth.mfa.verify({ factorId, challengeId: ch.id, code }));
+  },
+  async mfaUnenroll(factorId) { return must(await sb.auth.mfa.unenroll({ factorId })); },
+  async updateMyProfile(patch) {
+    const s = await this.session();
+    return must(await sb.from('profiles').update(patch).eq('id', s.user.id).select().single());
+  },
+
+  // ---------- times ----------
+  async listTeams() { return must(await sb.from('teams').select('*').order('name')); },
+  async saveTeam(t) { return must(await sb.from('teams').upsert(t).select().single()); },
+  async deleteTeam(id) { return must(await sb.from('teams').delete().eq('id', id)); },
+
+  // ---------- formulários (construtor) ----------
+  async listForms() { return must(await sb.from('forms').select('*').order('created_at')); },
+  async saveForm(f) { return must(await sb.from('forms').upsert(f).select().single()); },
+  async deleteForm(id) { return must(await sb.from('forms').delete().eq('id', id)); },
+  async publicForm({ slug, id }) { return must(await sb.rpc('public_form', { p_slug: slug ?? null, p_id: id ?? null })); },
+  async uploadFile(sessionId, file) {
+    const safe = file.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '_').slice(-80);
+    const path = `respostas/${sessionId}/${crypto.randomUUID()}-${safe}`;
+    must(await sb.storage.from('form-uploads').upload(path, file, { upsert: false, contentType: file.type || undefined }));
+    return path;
+  },
+  async fileUrl(path) { return must(await sb.storage.from('form-uploads').createSignedUrl(path, 600)).signedUrl; },
+  async uploadMedia(file) {
+    const path = `midia/${crypto.randomUUID()}-${file.name.replace(/[^\w.-]+/g, '_').slice(-60)}`;
+    must(await sb.storage.from('form-media').upload(path, file, { contentType: file.type }));
+    return sb.storage.from('form-media').getPublicUrl(path).data.publicUrl;
+  },
+
+  // ---------- financeiro ----------
+  async listAdAccounts() { return must(await sb.from('ad_accounts').select('id,created_at,platform,account_id,name,enabled,last_sync_at,last_error,access_token').order('created_at')); },
+  async saveAdAccount(a) { return must(await sb.from('ad_accounts').upsert(a).select().single()); },
+  async deleteAdAccount(id) { return must(await sb.from('ad_accounts').delete().eq('id', id)); },
+  async syncAds(accountId = null, days = 30) { return must(await sb.rpc('ads_sync', { p_account: accountId, p_days: days })); },
+  async processAds() { try { return must(await sb.rpc('ads_sync_process')); } catch (e) { return 0; } },
+  async listInsights(from, to) {
+    const out = []; let i = 0;
+    for (;;) {
+      const rows = must(await sb.from('ad_insights').select('*').gte('date', from).lte('date', to).order('id').range(i, i + 999));
+      out.push(...rows); if (rows.length < 1000) return out; i += 1000;
+    }
+  },
+  async listFinance(from, to) { return must(await sb.from('finance_entries').select('*').gte('date', from).lte('date', to).order('date', { ascending: false })); },
+  async saveFinance(e) { return must(await sb.from('finance_entries').upsert(e).select().single()); },
+  async deleteFinance(id) { return must(await sb.from('finance_entries').delete().eq('id', id)); },
+
+  // ---------- auditoria ----------
+  async listAudit(limit = 200) { return must(await sb.from('audit_log').select('*').order('id', { ascending: false }).limit(limit)); },
+  async auditEvent(action, entity, details) { try { await sb.rpc('audit_event', { p_action: action, p_entity: entity, p_details: details || null }); } catch (e) {} },
+
   subscribe(cb) {
     sb.channel('crm-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, (p) => cb(p.eventType, p.new, 'leads'))
@@ -119,12 +187,17 @@ const live = {
 const K = {
   leads: 'tracto_v2_leads', stages: 'tracto_v2_stages', labels: 'tracto_v2_labels', act: 'tracto_v2_activity', ev: 'tracto_v2_events',
   track: 'tracto_v3_tracking', pixels: 'tracto_v3_pixels', tev: 'tracto_v3_tracking_events', partials: 'tracto_v3_partials',
-  keys: 'tracto_v2_apikeys', hooks: 'tracto_v2_webhooks', dels: 'tracto_v2_deliveries'
+  keys: 'tracto_v2_apikeys', hooks: 'tracto_v2_webhooks', dels: 'tracto_v2_deliveries',
+  teams: 'tracto_v4_teams', forms: 'tracto_v4_forms', adacc: 'tracto_v4_ad_accounts', ins: 'tracto_v4_ad_insights', fin: 'tracto_v4_finance',
+  audit: 'tracto_v4_audit', me: 'tracto_v4_me'
 };
 const read = (k, d = []) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } };
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
-const DEMO_ME = { id: 'demo-user', nome: 'Você (demo)', email: 'demo@tracto', ativo: true };
-const DEMO_TEAM = [DEMO_ME, { id: 'demo-isaque', nome: 'Isaque', email: 'isaque@tracto', ativo: true }, { id: 'demo-luiz', nome: 'Luiz', email: 'luiz@tracto', ativo: true }];
+const DEMO_ME = { id: 'demo-user', nome: 'Você (demo)', email: 'demo@tracto', ativo: true, role: 'admin', team_id: null, pushcut_url: null, phone: null };
+const DEMO_TEAM = [DEMO_ME, { id: 'demo-isaque', nome: 'Isaque', email: 'isaque@tracto', ativo: true, role: 'sdr', team_id: null }, { id: 'demo-luiz', nome: 'Luiz', email: 'luiz@tracto', ativo: true, role: 'gestor', team_id: null }];
+const demoTeam = () => { const saved = read(K.me, {}); return DEMO_TEAM.map((p) => ({ ...p, ...(saved[p.id] || {}) })); };
+const demoMe = () => demoTeam()[0];
+const demoAudit = (action, entity, details) => { const a = read(K.audit); a.unshift({ id: Date.now() + Math.random(), created_at: now(), actor_name: demoMe().nome, action, entity, details }); write(K.audit, a.slice(0, 300)); };
 const DDD_UF = { SP: [11, 19], RJ: [21, 22, 24], ES: [27, 28], MG: [31, 32, 33, 34, 35, 37, 38], PR: [41, 42, 43, 44, 45, 46], SC: [47, 48, 49], RS: [51, 53, 54, 55], DF: [61], GO: [62, 64], TO: [63], MT: [65, 66], MS: [67], AC: [68], RO: [69], BA: [71, 73, 74, 75, 77], SE: [79], PE: [81, 87], AL: [82], PB: [83], RN: [84], CE: [85, 88], PI: [86, 89], PA: [91, 93, 94], AM: [92, 97], RR: [95], AP: [96], MA: [98, 99] };
 export const normPhone = (v) => { const d = String(v || '').replace(/\D/g, ''); if (d.length < 10) return null; return d.length <= 11 ? '55' + d : d; };
 export const dddUf = (v) => {
@@ -220,6 +293,7 @@ function demoInsertLead(fields, { silent = false } = {}) {
     assigned_to: null, valor: null, reminder_at: null, reminder_note: null, recovered_from: null, ...fields
   };
   lead.estado = lead.estado || dddUf(lead.whatsapp);
+  if (demoStages().find((s) => s.id === lead.stage_id)?.kind === 'won') lead.won_at = lead.won_at || lead.created_at;
   write(K.leads, [lead, ...read(K.leads)]);
   log(lead.id, lead.recovered_from ? 'recovered' : 'created',
     lead.recovered_from ? 'Recuperado de formulário incompleto: ' + (lead.form_name || lead.form_id)
@@ -298,10 +372,21 @@ const demo = {
   },
 
   // ---------- sessão ----------
-  async session() { return { user: DEMO_ME }; },
-  async signIn() { return { user: DEMO_ME }; },
+  async session() { return { user: demoMe() }; },
+  async signIn() { return { user: demoMe() }; },
   async signOut() {},
-  async me() { return DEMO_ME; },
+  async me() { return demoMe(); },
+  async signUp() { return { user: null }; },
+  async resetPassword() {},
+  async updatePassword() {},
+  async resendConfirmation() {},
+  onAuth() {},
+  async mfaFactors() { return read('tracto_v4_mfa', []); },
+  async mfaAal() { return { currentLevel: 'aal1', nextLevel: read('tracto_v4_mfa', []).length ? 'aal2' : 'aal1' }; },
+  async mfaEnroll() { return { id: 'demo-factor', totp: { qr_code: '', secret: 'DEMO2FADEMO2FADEMO2FA', uri: 'otpauth://totp/Tracto:demo?secret=DEMO2FADEMO2FADEMO2FA' } }; },
+  async mfaVerify(factorId, code) { if (!/^\d{6}$/.test(code)) throw new Error('código inválido'); write('tracto_v4_mfa', [{ id: factorId, status: 'verified', friendly_name: 'Tracto CRM (demo)' }]); },
+  async mfaUnenroll() { write('tracto_v4_mfa', []); },
+  async updateMyProfile(patch) { const all = read(K.me, {}); all[DEMO_ME.id] = { ...(all[DEMO_ME.id] || {}), ...patch }; write(K.me, all); return demoMe(); },
 
   // ---------- leads ----------
   async listLeads() { return read(K.leads).sort((a, b) => b.created_at.localeCompare(a.created_at)); },
@@ -313,6 +398,7 @@ const demo = {
       const nl = { ...l, ...patch, updated_at: now(), last_activity_at: now() };
       if ('stage_id' in patch && patch.stage_id !== l.stage_id) {
         const st = stages.find((s) => s.id === patch.stage_id);
+        nl.won_at = st?.kind === 'won' ? (l.won_at || now()) : null;
         log(l.id, 'stage', `Estágio: ${stages.find((s) => s.id === l.stage_id)?.name || 'sem estágio'} → ${st?.name || 'sem estágio'}`);
         demoHook('lead.stage_changed', nl);
         if (st?.kind === 'won') demoHook('lead.won', nl);
@@ -360,8 +446,79 @@ const demo = {
     write(K.labels, read(K.labels).filter((l) => l.id !== id));
     write(K.leads, read(K.leads).map((l) => ({ ...l, label_ids: (l.label_ids || []).filter((x) => x !== id) })));
   },
-  async listProfiles() { return DEMO_TEAM; },
-  async updateProfile() {},
+  async listProfiles() { return demoTeam(); },
+  async updateProfile(id, patch) { const all = read(K.me, {}); all[id] = { ...(all[id] || {}), ...patch }; write(K.me, all); demoAudit('update', 'profiles', patch); },
+
+  // ---------- times ----------
+  async listTeams() { return read(K.teams); },
+  async saveTeam(t) { const all = read(K.teams); const i = all.findIndex((x) => x.id === t.id); const row = i >= 0 ? { ...all[i], ...t } : { id: uid(), created_at: now(), auto_assign: false, ...t }; if (i >= 0) all[i] = row; else all.push(row); write(K.teams, all); return row; },
+  async deleteTeam(id) { write(K.teams, read(K.teams).filter((t) => t.id !== id)); },
+
+  // ---------- formulários (construtor) ----------
+  async listForms() { return read(K.forms); },
+  async saveForm(f) {
+    const all = read(K.forms);
+    if (all.some((x) => x.slug === f.slug && x.id !== f.id)) throw new Error('já existe um formulário com esse endereço');
+    const i = all.findIndex((x) => x.id === f.id);
+    const row = { ...(i >= 0 ? all[i] : { created_at: now(), published: true, settings: {}, fields: [] }), ...f, updated_at: now() };
+    if (i >= 0) all[i] = row; else all.push(row);
+    write(K.forms, all); demoAudit(i >= 0 ? 'update' : 'insert', 'forms', { nome: row.name }); return row;
+  },
+  async deleteForm(id) { write(K.forms, read(K.forms).filter((f) => f.id !== id)); },
+  async publicForm({ slug, id }) {
+    const f = read(K.forms).find((x) => x.published && (id ? x.id === id : x.slug === (slug ?? '')));
+    return f ? { id: f.id, slug: f.slug, name: f.name, fields: f.fields, settings: f.settings } : null;
+  },
+  async uploadFile(sessionId, file) {
+    if (file.size > 50 * 1024 * 1024) throw new Error('arquivo acima de 50 MB');
+    return `respostas/${sessionId}/${uid()}-${file.name}`;
+  },
+  async fileUrl() { return null; },
+  async uploadMedia(file) {
+    if (file.size > 5 * 1048576) throw new Error('imagem acima de 5 MB');
+    return await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); });
+  },
+
+  // ---------- financeiro ----------
+  async listAdAccounts() { return read(K.adacc); },
+  async saveAdAccount(a) {
+    const all = read(K.adacc); const i = all.findIndex((x) => x.id === a.id);
+    const row = i >= 0 ? { ...all[i], ...a } : { id: uid(), created_at: now(), platform: 'meta', enabled: true, last_sync_at: null, last_error: null, ...a };
+    if (i >= 0) all[i] = row; else all.push(row); write(K.adacc, all); demoAudit(i >= 0 ? 'update' : 'insert', 'ad_accounts', { nome: row.name }); return row;
+  },
+  async deleteAdAccount(id) { write(K.adacc, read(K.adacc).filter((a) => a.id !== id)); write(K.ins, read(K.ins).filter((r) => r.account_ref !== id)); },
+  async syncAds(accountId = null, days = 30) {
+    // demo: gera gasto fictício coerente com as campanhas dos leads
+    const accs = read(K.adacc).filter((a) => a.enabled && (!accountId || a.id === accountId));
+    const camps = [...new Set(read(K.leads).map((l) => l.utm_campaign).filter(Boolean))];
+    if (!camps.length) camps.push('diagnostico-ferragistas');
+    const ins = read(K.ins);
+    for (const a of accs) {
+      for (let d = 0; d < days; d++) {
+        const date = new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+        camps.forEach((c, ci) => ['video-1', 'carrossel-2'].forEach((ad, ai) => {
+          const key = `${a.id}|${date}|${c}|${ad}`;
+          if (ins.some((r) => r.key === key)) return;
+          const spend = Math.round((18 + Math.random() * 40) * (1 + ci * 0.3) * (ai ? 0.7 : 1) * 100) / 100;
+          const imp = Math.round(spend * (90 + Math.random() * 60));
+          ins.push({ key, id: uid(), account_ref: a.id, date, campaign_id: 'c' + ci, campaign_name: c, adset_id: 's' + ci, adset_name: 'publico-' + (ci + 1), ad_id: `a${ci}${ai}`, ad_name: ad,
+            spend, impressions: imp, clicks: Math.round(imp * (0.012 + Math.random() * 0.01)), reach: Math.round(imp * 0.8), meta_leads: Math.random() < 0.35 ? 1 : 0 });
+        }));
+      }
+      Object.assign(a, { last_sync_at: now(), last_error: null });
+    }
+    write(K.ins, ins); write(K.adacc, read(K.adacc).map((x) => accs.find((a) => a.id === x.id) || x));
+    return accs.length;
+  },
+  async processAds() { return 0; },
+  async listInsights(from, to) { return read(K.ins).filter((r) => r.date >= from && r.date <= to); },
+  async listFinance(from, to) { return read(K.fin).filter((e) => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date)); },
+  async saveFinance(e) { const all = read(K.fin); const i = all.findIndex((x) => x.id === e.id); const row = i >= 0 ? { ...all[i], ...e } : { id: uid(), created_at: now(), category: 'Outros', ...e }; if (i >= 0) all[i] = row; else all.push(row); write(K.fin, all); return row; },
+  async deleteFinance(id) { write(K.fin, read(K.fin).filter((e) => e.id !== id)); },
+
+  // ---------- auditoria ----------
+  async listAudit(limit = 200) { return read(K.audit).slice(0, limit); },
+  async auditEvent(action, entity, details) { demoAudit(action, entity, details); },
 
   async listEvents(sinceIso) { return read(K.ev).filter((e) => !sinceIso || e.created_at >= sinceIso); },
 
@@ -520,8 +677,8 @@ const demo = {
 export const DEMO_ALLOWED = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const notConfigured = new Proxy({}, {
   get: (_, key) => {
-    if (['trackEvent', 'subscribe', 'savePartial'].includes(key)) return async () => {};
-    if (key === 'session' || key === 'publicTracking' || key === 'getPartial') return async () => null;
+    if (['trackEvent', 'subscribe', 'savePartial', 'onAuth', 'auditEvent'].includes(key)) return async () => {};
+    if (['session', 'publicTracking', 'getPartial', 'publicForm'].includes(key)) return async () => null;
     return async () => { throw new Error('Supabase não configurado'); };
   }
 });

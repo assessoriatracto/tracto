@@ -8,6 +8,10 @@ import { renderDashboard } from './dashboard.js?v=5';
 import { renderForms, renderSettings } from './admin.js?v=5';
 import { renderIntegrations, renderPixel, leadMetaEvents, statusPill } from './integrations.js?v=5';
 import { renderRecovery, loadPartials } from './recovery.js?v=5';
+import { showSignIn, showSignUp, showForgot, showReset, showMfa, showPending, watchIdle, AUTH_ROUTES } from './auth.js?v=5';
+import { openProfile } from './profile.js?v=5';
+import { renderBuilder } from './builder.js?v=5';
+import { renderFinance } from './finance.js?v=5';
 
 // ============================================================
 // preferências locais (por navegador)
@@ -50,17 +54,36 @@ document.addEventListener('click', (e) => {
 // ============================================================
 // boot / auth / router
 // ============================================================
+const hashRoute = () => (location.hash.replace('#/', '') || 'leads').split('?')[0];
+let started = false;
+
 async function boot() {
-  if (!CONFIGURED) return showLogin('O CRM ainda não está conectado ao banco. Preencha a URL e a chave do Supabase em assets/js/tracto-config.js.');
+  const r = hashRoute();
+  const enter = () => { location.hash = '#/leads'; boot(); };
+  if (!CONFIGURED) return showSignIn(enter, 'O CRM ainda não está conectado ao banco. Preencha a URL e a chave do Supabase em assets/js/tracto-config.js.');
+  // no modo demo as telas de acesso podem ser abertas pelo endereço, pra conferir o visual
+  if (!LIVE && ['entrar', 'cadastro', 'esqueci', 'redefinir'].includes(r)) {
+    return ({ entrar: () => showSignIn(enter), cadastro: showSignUp, esqueci: showForgot, redefinir: () => showReset(enter) })[r]();
+  }
+  if (r === 'cadastro') return showSignUp();
+  if (r === 'esqueci') return showForgot();
   let session = null;
   try { session = await DB.session(); } catch (e) {}
-  if (!session) return showLogin();
+  if (r === 'redefinir' && session) return showReset(enter);
+  if (!session) return showSignIn(enter, r === 'confirmado' ? 'E-mail confirmado! Entre com sua senha.' : '');
+  let aal = null;
+  try { aal = await DB.mfaAal(); } catch (e) {}
+  if (aal && aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') return showMfa(enter);
   try { S.me = await DB.me(); } catch (e) { S.me = null; }
-  if (!S.me?.ativo) return showLogin(S.me ? 'Seu acesso ainda não foi liberado. Peça pra alguém da equipe ativar seu usuário em Ajustes > Equipe.' : '');
+  if (!S.me?.ativo) return showPending(S.me);
+  if (AUTH_ROUTES.includes(r)) history.replaceState(null, '', location.pathname + '#/leads');
+  if (started) return route();
+  started = true;
   $('#login').hidden = true;
   $('#app').hidden = false;
   $('#demoBar').hidden = LIVE;
   $('#logoutBtn').hidden = !LIVE;
+  applyRole();
   await loadAll();
   DB.subscribe((type, row, table) => {
     if (table === 'leads' && type === 'INSERT' && row) toast('Novo lead: ' + row.nome);
@@ -73,26 +96,24 @@ async function boot() {
   window.addEventListener('tracto:reload-leads', async () => { await loadAll(false); });
   window.addEventListener('tracto:open-lead', (e) => { if (S.leads.some((l) => l.id === e.detail)) openDrawer(e.detail); });
   refreshPartialsBadge();
-  window.addEventListener('hashchange', route);
   route();
+  watchIdle();
   const due = S.leads.filter(isDue).length;
   if (due) toast(`Você tem ${due} lembrete${due > 1 ? 's' : ''} vencido${due > 1 ? 's' : ''}`);
 }
+window.addEventListener('hashchange', () => { if (!started || AUTH_ROUTES.includes(hashRoute())) boot(); else route(); });
+if (LIVE) DB.onAuth((event) => { if (event === 'PASSWORD_RECOVERY') { location.hash = '#/redefinir'; } if (event === 'SIGNED_OUT' && started) location.reload(); });
 
-function showLogin(msg = '') {
-  $('#app').hidden = true;
-  $('#login').hidden = false;
-  $('#lErr').textContent = msg;
+// o menu mostra só o que o papel permite (o banco também bloqueia)
+const ROLE_ROUTES = { admin: null, gestor: ['leads', 'recuperacao', 'dashboard', 'financeiro', 'formularios', 'ajustes'], sdr: ['leads', 'recuperacao', 'dashboard', 'ajustes'] };
+export const can = (routeName) => !ROLE_ROUTES[S.me?.role || 'sdr'] || ROLE_ROUTES[S.me?.role || 'sdr'].includes(routeName);
+function applyRole() {
+  $$('.side a[data-route]').forEach((a) => { a.hidden = !can(a.dataset.route); });
+  const av = $('#meBtn');
+  if (av) { av.textContent = (S.me?.nome || '?').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase(); av.title = `${S.me?.nome} · ${({ admin: 'Admin', gestor: 'Gestor', sdr: 'SDR' })[S.me?.role] || ''}`; }
 }
-$('#loginForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  $('#lBtn').disabled = true;
-  $('#lErr').textContent = '';
-  try { await DB.signIn($('#lEmail').value.trim(), $('#lPass').value); await boot(); }
-  catch (err) { $('#lErr').textContent = 'E-mail ou senha inválidos.'; }
-  $('#lBtn').disabled = false;
-});
-$('#logoutBtn').addEventListener('click', async (e) => { e.preventDefault(); await DB.signOut(); location.reload(); });
+$('#logoutBtn').addEventListener('click', async (e) => { e.preventDefault(); await DB.signOut(); location.hash = '#/entrar'; location.reload(); });
+$('#meBtn')?.addEventListener('click', (e) => { e.preventDefault(); openProfile(); });
 
 async function refreshPartialsBadge() {
   try {
@@ -113,11 +134,13 @@ export async function loadAll(showSpinner = true) {
 
 function route() {
   closePop();
-  const r = (location.hash.replace('#/', '') || 'leads').split('?')[0];
+  let r = hashRoute();
+  if (!can(r)) { r = 'leads'; history.replaceState(null, '', location.pathname + '#/leads'); }
   $$('.side a[data-route]').forEach((a) => a.classList.toggle('on', a.dataset.route === r));
   const view = $('#view');
   if (r === 'dashboard') renderDashboard(view);
-  else if (r === 'formularios') renderForms(view);
+  else if (r === 'formularios') renderBuilder(view);
+  else if (r === 'financeiro') renderFinance(view);
   else if (r === 'ajustes') renderSettings(view, async () => { await loadAll(false); });
   else if (r === 'integracoes') renderIntegrations(view);
   else if (r === 'pixel') renderPixel(view);
@@ -386,6 +409,7 @@ function exportCSV(list) {
     (l.label_ids || []).map(labelOf).filter(Boolean).map((x) => x.name).join(', '), l.valor, formName(l), sourceLabel(l.source), l.utm_source, l.utm_medium, l.utm_campaign, l.utm_content,
     ...qs.map((q) => (l.answers || []).find((a) => a.label === q)?.value)]);
   downloadCSV(`leads-tracto-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...rows]);
+  DB.auditEvent('export', 'leads', { quantidade: list.length });
 }
 
 // ---------- eventos da página de leads ----------
@@ -635,7 +659,7 @@ function renderDrawer() {
       <div class="sec" id="answersSec">
         <h4>Respostas do formulário</h4>
         <div class="form-meta">${esc(formName(l))}<br>Identificação do lead ${esc(l.id.slice(0, 8).toUpperCase())}<br>Enviado em ${esc(longDate(l.created_at))}.</div>
-        ${(l.answers || []).length ? `<div class="answers">${l.answers.map((a) => `<div><div class="q">${esc(a.label)}</div><div class="a">${esc(a.value)}</div></div>`).join('')}</div>` : '<p class="muted">Lead cadastrado manualmente, sem respostas de formulário.</p>'}
+        ${(l.answers || []).length ? `<div class="answers">${l.answers.map((a) => `<div><div class="q">${esc(a.label)}</div><div class="a">${a.type === 'file' || /^respostas\//.test(a.value) ? `<button class="b b-sm" data-d="file" data-path="${esc(a.value)}">📎 ${esc(a.file_name || a.value.split('/').pop().replace(/^[\w-]{36}-/, ''))}</button>` : esc(a.value)}</div></div>`).join('')}</div>` : '<p class="muted">Lead cadastrado manualmente, sem respostas de formulário.</p>'}
       </div>
       <div class="sec" id="metaSec" hidden><h4>Eventos enviados (Meta e Google)</h4><div class="meta-evs"></div></div>
       ${tracking.length ? `<div class="sec"><h4>Rastreamento</h4><dl class="kv" style="margin:10px 0 0">${tracking.map(([k, n]) => `<dt>${n}</dt><dd>${esc(l[k])}</dd>`).join('')}<dt>Fonte</dt><dd>${sourceLabel(l.source)}</dd></dl></div>` : ''}
@@ -706,6 +730,9 @@ drawer.addEventListener('click', async (e) => {
   const act = b.dataset.d;
   if (act === 'close') closeDrawer();
   if (act === 'answers') $('#answersSec').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (act === 'file') {
+    try { const url = await DB.fileUrl(b.dataset.path); if (url) window.open(url, '_blank', 'noopener'); else toast('No modo demo os arquivos não são guardados'); } catch (err) { fail(err); }
+  }
   if (act === 'delete') deleteLead(id);
   if (act === 'edit') editContact(l);
   if (act === 'unlabel') {

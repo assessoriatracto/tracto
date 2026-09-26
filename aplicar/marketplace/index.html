@@ -10,7 +10,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/img/favicon.svg">
 <link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
 <link rel="stylesheet" href="/assets/css/app.css?v=3">
-<link rel="stylesheet" href="/aplicar/form.css?v=2">
+<link rel="stylesheet" href="/aplicar/form.css?v=3">
 
 <!-- Pixels (Meta e Google) são carregados pelo /assets/js/tracking.js a partir da configuração do CRM -->
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1357841419671798&ev=PageView&noscript=1"/><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=2142406153298000&ev=PageView&noscript=1"/></noscript>
@@ -23,26 +23,76 @@
 
 <script src="/assets/js/tracto-config.js?v=3"></script>
 <script type="module">
-import { DB } from '/assets/js/db.js?v=5';
-import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=5';
-import { mountForm } from '/assets/js/form-engine.js?v=5';
-import { createTracker } from '/assets/js/tracking.js?v=5';
+import { DB } from '/assets/js/db.js?v=6';
+import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=6';
+import { mountForm } from '/assets/js/form-engine.js?v=6';
+import { createTracker } from '/assets/js/tracking.js?v=6';
+
+// tema: cores, logo, marca e timer definidos no construtor
+function applyTheme(settings, { timer = true } = {}) {
+  const th = settings.theme || {};
+  const st = document.documentElement.style;
+  const lum = (hex) => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex || ''); if (!m) return 0.5; const [r, g, b] = m.slice(1).map((x) => parseInt(x, 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  ['--tf-primary', '--tf-on-primary', '--tf-bg', '--tf-text'].forEach((v) => st.removeProperty(v));
+  if (th.primary) { st.setProperty('--tf-primary', th.primary); st.setProperty('--tf-on-primary', lum(th.primary) > 0.55 ? '#000' : '#fff'); }
+  if (th.bg) { st.setProperty('--tf-bg', th.bg); document.querySelector('meta[name=theme-color]')?.setAttribute('content', th.bg); }
+  if (th.text) st.setProperty('--tf-text', th.text);
+  const img = document.querySelector('.tf-topbar img');
+  if (img) { img.src = th.logo || '/assets/img/tracto-logo.svg?v=3'; img.classList.toggle('tf-logo-custom', !!th.logo); }
+  const bm = document.querySelector('.tf-brandmark'); if (bm) bm.hidden = !!settings.hideBrand;
+  if (settings.title) document.title = settings.title;
+  document.querySelector('.tf-timer')?.remove();
+  if (timer && settings.timer?.minutes > 0) {
+    const key = 'tf_timer_' + (settings._formId || 'x');
+    let start = +(sessionStorage.getItem(key) || 0);
+    if (!start) { start = Date.now(); try { sessionStorage.setItem(key, String(start)); } catch (e) {} }
+    const el = document.createElement('div');
+    el.className = 'tf-timer'; el.setAttribute('role', 'timer');
+    document.body.appendChild(el);
+    const tick = () => {
+      const left = Math.max(0, settings.timer.minutes * 60 - Math.floor((Date.now() - start) / 1000));
+      el.innerHTML = `⏱ ${settings.timer.label ? String(settings.timer.label).replace(/[<>]/g, '') + ' ' : ''}<b>${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}</b>`;
+      el.classList.toggle('is-over', !left);
+      if (!left || !el.isConnected) clearInterval(iv);
+    };
+    const iv = setInterval(tick, 1000); tick();
+  }
+}
+
+// prévia do construtor do CRM: recebe o formulário por postMessage e não grava nada
+if (new URLSearchParams(location.search).has('preview')) {
+  const allowed = (o) => o === location.origin || o === 'https://crm.assessoriatracto.com.br' || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o);
+  const rootEl = document.getElementById('form');
+  let eng = null;
+  addEventListener('message', (e) => {
+    if (!allowed(e.origin) || e.data?.type !== 'tracto-preview') return;
+    const f = e.data.form;
+    applyTheme(f.settings || {}, { timer: false });
+    if (f.settings?.timer?.minutes > 0) applyTheme({ ...f.settings, _formId: 'preview-' + Date.now() });
+    eng?.destroy();
+    eng = mountForm(rootEl, f, { settings: f.settings || {}, submit: async () => {}, upload: async (file) => file.name, track: () => {} });
+    if (e.data.step && e.data.step !== f.fields[0]?.id) eng.go(e.data.step);
+  });
+  parent.postMessage({ type: 'tracto-preview-ready' }, '*');
+  await new Promise(() => {}); // prévia: não carrega pixels nem grava rascunho
+}
 
 const params = new URLSearchParams(location.search);
 const qp = (k) => params.get(k) || null;
 const store = (k, fresh, s = localStorage) => { try { const v = s.getItem(k) || fresh(); s.setItem(k, v); return v; } catch (e) { return fresh(); } };
 const cookie = (n) => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || null;
 
-// /aplicar/<slug>/ define o formulário; ?f=<id> continua funcionando
-const slug = (location.pathname.match(/\/aplicar\/([^/]+)/) || [])[1];
-let form = (slug && formBySlug(slug)) || FORMS[qp('f')] || FORMS[DEFAULT_FORM];
-
-// retomada pelo link enviado na recuperação (?retomar=<token>)
+// qual formulário: /aplicar/<slug>/, ?s=<slug> (forms do construtor), ?f=<id>; o banco tem prioridade sobre os forms fixos
+const slug = qp('s') ?? (location.pathname.match(/\/aplicar\/([^/]+)/) || [])[1] ?? '';
+const fromDb = async (q) => { try { const f = await DB.publicForm(q); return f?.fields?.length ? f : null; } catch (e) { return null; } };
 let resume = null;
-if (qp('retomar')) {
-  try { resume = await DB.getPartial(qp('retomar')); } catch (e) { resume = null; }
-  if (resume && FORMS[resume.form_id]) form = FORMS[resume.form_id];
-}
+if (qp('retomar')) { try { resume = await DB.getPartial(qp('retomar')); } catch (e) { resume = null; } }
+let form = resume ? (await fromDb({ id: resume.form_id })) || FORMS[resume.form_id] : null;
+if (!form) form = qp('f') ? (await fromDb({ id: qp('f') })) || FORMS[qp('f')] : null;
+if (!form) form = (await fromDb({ slug })) || formBySlug(slug) || FORMS[DEFAULT_FORM];
+const settings = form.settings || {};
+applyTheme({ ...settings, _formId: form.id });
+
 
 const visitorId = store('trk_vid', () => crypto.randomUUID());
 let sid = resume?.session_id || store('tf_sid', () => crypto.randomUUID(), sessionStorage);
@@ -52,12 +102,12 @@ const fbclid = qp('fbclid');
 const context = () => ({
   form_id: form.id, form_name: form.name, session_id: sid, visitor_id: visitorId,
   fbp: cookie('_fbp'), fbc: cookie('_fbc') || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null), ga_cookie: cookie('_ga'),
-  utm_source: qp('utm_source'), utm_medium: qp('utm_medium'), utm_campaign: qp('utm_campaign'), utm_content: qp('utm_content'), utm_term: qp('utm_term'),
+  utm_source: qp('utm_source'), utm_medium: qp('utm_medium'), utm_campaign: qp('utm_campaign'), utm_content: qp('utm_content'), utm_term: qp('utm_term'), utm_id: qp('utm_id'),
   fbclid, gclid: qp('gclid'), gbraid: qp('gbraid'), wbraid: qp('wbraid'),
   referrer: document.referrer || null, user_agent: navigator.userAgent.slice(0, 300), event_source_url: location.href
 });
 
-const tracker = createTracker({ form, visitorId, loadConfig: () => DB.publicTracking() });
+const tracker = createTracker({ form, visitorId, loadConfig: () => DB.publicTracking(), extraGtm: settings.gtm ? [settings.gtm] : [] });
 tracker.pageView();
 tracker.viewContent();
 
@@ -80,6 +130,8 @@ const saveDraft = (state, opts) => {
 
 const engine = mountForm(document.getElementById('form'), form, {
   track,
+  settings,
+  upload: (file) => DB.uploadFile(sid, file),
   initial: resume ? { answers: resume.raw } : null,
   onProgress(state) {
     saveDraft(state);

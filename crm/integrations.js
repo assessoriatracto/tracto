@@ -104,7 +104,7 @@ app.post('/tracto', express.raw({ type: 'application/json' }), (req, res) => {
         ${hooks.length ? hooks.map((w) => `
           <div class="hook" data-id="${w.id}">
             <div class="hook-main">
-              <div class="hook-title"><b>${esc(w.name)}</b>${w.active ? '' : ' <span class="pill">Pausado</span>'}</div>
+              <div class="hook-title"><b>${esc(w.name)}</b>${w.format === 'pushcut' ? ' <span class="pill wait">Pushcut</span>' : ''}${w.active ? '' : ' <span class="pill">Pausado</span>'}</div>
               <div class="hook-url">${esc(w.url)}</div>
               <div class="chips">${w.events.map((ev) => `<span class="chip">${esc(ev)}</span>`).join('')}</div>
             </div>
@@ -186,18 +186,28 @@ function hookModal(w, done) {
   const sel = new Set(w?.events || ['lead.created', 'lead.stage_changed']);
   modal(`<h3>${w ? 'Editar webhook' : 'Novo webhook'}</h3>
     <div class="row"><label class="lbl">Nome</label><input class="inp" data-name maxlength="60" value="${esc(w?.name || '')}" placeholder="Ex: Zapier, n8n, planilha"></div>
+    <div class="row"><label class="lbl">Formato</label><div class="seg"><button type="button" class="b ${(w?.format || 'json') === 'json' ? 'on' : ''}" data-fmt="json">JSON (Zapier, n8n, Make…)</button><button type="button" class="b ${w?.format === 'pushcut' ? 'on' : ''}" data-fmt="pushcut">Pushcut (celular)</button></div>
+      <p class="help" style="margin-top:6px" data-fmt-help>${w?.format === 'pushcut' ? 'Notificação no celular com título, resumo e link direto pro CRM. No app Pushcut crie uma notificação e copie a URL do webhook.' : 'Corpo JSON completo, assinado com HMAC-SHA256.'}</p></div>
     <div class="row"><label class="lbl">URL de destino</label><input class="inp" data-url type="url" value="${esc(w?.url || '')}" placeholder="https://hooks.zapier.com/…"></div>
     <div class="row"><label class="lbl">Eventos</label><div class="ev-list">${EVENTS.map(([k, n, d]) => `
       <label class="ev"><input type="checkbox" value="${k}" ${sel.has(k) ? 'checked' : ''}><span><b>${esc(n)}</b> <code>${k}</code>${d ? `<small>${esc(d)}</small>` : ''}</span></label>`).join('')}</div></div>
     <div class="modal-foot"><button class="b" data-close>Cancelar</button><button class="b b-primary" data-ok>Salvar</button></div>`, (c, close) => {
+    let format = w?.format || 'json';
+    c.querySelectorAll('[data-fmt]').forEach((b) => b.addEventListener('click', () => {
+      format = b.dataset.fmt;
+      c.querySelectorAll('[data-fmt]').forEach((x) => x.classList.toggle('on', x === b));
+      c.querySelector('[data-fmt-help]').textContent = format === 'pushcut' ? 'Notificação no celular com título, resumo e link direto pro CRM. No app Pushcut crie uma notificação e copie a URL do webhook.' : 'Corpo JSON completo, assinado com HMAC-SHA256.';
+      c.querySelector('[data-url]').placeholder = format === 'pushcut' ? 'https://api.pushcut.io/…/notifications/Novo%20lead' : 'https://hooks.zapier.com/…';
+    }));
     c.querySelector('[data-ok]').addEventListener('click', async () => {
       const name = c.querySelector('[data-name]').value.trim();
       const url = c.querySelector('[data-url]').value.trim();
       const events = $$('.ev input:checked', c).map((i) => i.value);
+      if (format === 'pushcut' && !/^https:\/\/api\.pushcut\.io\//.test(url)) return toast('A URL do Pushcut começa com https://api.pushcut.io/', true);
       if (!name) return toast('Dê um nome ao webhook', true);
       if (!/^https?:\/\/\S+\.\S+/.test(url)) return toast('Informe uma URL válida (https://…)', true);
       if (!events.length) return toast('Escolha pelo menos um evento', true);
-      try { await DB.saveWebhook({ ...(w ? { id: w.id } : {}), name, url, events }); close(); toast('Webhook salvo'); done(); } catch (e) { fail(e); }
+      try { await DB.saveWebhook({ ...(w ? { id: w.id } : {}), name, url, events, format }); close(); toast('Webhook salvo'); done(); } catch (e) { fail(e); }
     });
   });
 }

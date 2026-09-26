@@ -18,9 +18,17 @@ const MSG = {
   date: 'Use o formato DD/MM/AAAA',
   instagram: 'Use só letras, números, ponto e underline',
   consent: 'Você precisa aceitar pra continuar',
-  submit: 'Não conseguimos enviar agora. Confira sua conexão e tente de novo.'
+  submit: 'Não conseguimos enviar agora. Confira sua conexão e tente de novo.',
+  business: 'Use seu e-mail de trabalho (não aceitamos Gmail, Hotmail e similares)',
+  cpf: 'CPF inválido. Confira os números',
+  cnpj: 'CNPJ inválido. Confira os números',
+  cep: 'CEP não encontrado. Confira os números',
+  file: 'Envie um arquivo pra continuar'
 };
-const QUESTION = ['short_text', 'long_text', 'email', 'phone', 'number', 'url', 'date', 'choice', 'multi', 'dropdown', 'yes_no', 'rating', 'scale', 'consent'];
+const FREE_EMAIL = ['gmail.com', 'googlemail.com', 'hotmail.com', 'hotmail.com.br', 'outlook.com', 'outlook.com.br', 'live.com', 'msn.com', 'yahoo.com', 'yahoo.com.br',
+  'icloud.com', 'me.com', 'bol.com.br', 'uol.com.br', 'terra.com.br', 'ig.com.br', 'globo.com', 'globomail.com', 'r7.com', 'zipmail.com.br', 'aol.com', 'gmx.com', 'proton.me', 'protonmail.com', 'yandex.com'];
+const QUESTION = ['short_text', 'long_text', 'email', 'phone', 'number', 'url', 'date', 'choice', 'multi', 'dropdown', 'yes_no', 'rating', 'scale', 'consent', 'cep', 'cpf', 'cnpj', 'file', 'calendly'];
+export const QUESTION_TYPES = QUESTION;
 const AUTO_ADVANCE = ['choice', 'yes_no', 'rating', 'scale'];
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -51,8 +59,9 @@ export function evaluate(cond, answers) {
   }
 }
 
-export function mountForm(root, form, { submit, track, onDone, onProgress, initial } = {}) {
+export function mountForm(root, form, { submit, track, onDone, onProgress, initial, upload, settings = {} } = {}) {
   const F = form.fields;
+  const ac = new AbortController(); // destroy() remove os ouvintes globais (prévia do construtor remonta o form)
   const idx = Object.fromEntries(F.map((f, i) => [f.id, i]));
   const answers = {};
   const history = [];
@@ -117,7 +126,9 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
   function titleHtml(f) {
     const n = history.filter((i) => QUESTION.includes(F[i].type)).length + 1;
     const numbered = QUESTION.includes(f.type);
-    return `
+    const media = f.image ? `<figure class="tf-media tf-a ${f.imageSize === 'large' ? 'is-large' : ''}"><img src="${esc(f.image)}" alt="${esc(f.imageAlt || '')}" loading="lazy"></figure>` : '';
+    if (f.type === 'testimonial') return media;
+    return `${media}
       ${numbered ? `<div class="tf-num tf-a">${n} ${ICON.arrow}</div>` : ''}
       <h1 class="tf-title tf-a">${recall(f.title)}${numbered && f.required ? '<span class="tf-req" aria-label="obrigatória"> *</span>' : ''}</h1>
       ${f.desc ? `<p class="tf-desc tf-a">${recall(f.desc).replace(/\n/g, '<br>')}</p>` : ''}`;
@@ -133,11 +144,43 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     const v = answers[f.id];
     switch (f.type) {
       case 'welcome':
-        return `<div class="tf-actions tf-a"><button type="button" class="tf-btn tf-btn-lg tf-ok">${esc(f.button || 'Começar')} <span aria-hidden="true">→</span></button><span class="tf-hint">pressione <kbd>Enter ↵</kbd></span></div>`;
+        return `<div class="tf-actions tf-a"><button type="button" class="tf-btn tf-btn-lg tf-ok">${esc(f.button || 'Começar')} <span aria-hidden="true">→</span></button><span class="tf-hint">pressione <kbd>Enter ↵</kbd></span></div>
+          ${settings.privacy !== false ? `<p class="tf-privacy tf-a">Ao continuar, você concorda com a <a href="${esc(settings.privacyUrl || '/privacidade/')}" target="_blank" rel="noopener">Política de Privacidade</a>. Seus dados ficam protegidos conforme a LGPD.</p>` : ''}`;
       case 'statement':
         return okBtn(esc(f.button || 'Continuar'));
+      case 'testimonial': {
+        const stars = f.rating ? `<div class="tf-stars tf-a" aria-label="${f.rating} de 5">${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)}</div>` : '';
+        return `${f.title ? `<p class="tf-kicker tf-a">${recall(f.title)}</p>` : ''}${stars}
+          <blockquote class="tf-quote tf-a">“${recall(f.quote || '')}”</blockquote>
+          <div class="tf-author tf-a">${f.photo ? `<img src="${esc(f.photo)}" alt="">` : `<span class="tf-author-av">${esc((f.author || '?').slice(0, 1))}</span>`}<div><b>${esc(f.author || '')}</b>${f.role ? `<span>${esc(f.role)}</span>` : ''}</div></div>
+          ${okBtn(esc(f.button || 'Continuar'))}`;
+      }
       case 'thankyou':
-        return `<div class="tf-thanks-icon tf-a">${ICON.check}</div>${f.cta ? `<div class="tf-actions tf-a"><a class="tf-btn tf-btn-lg" href="${esc(f.cta.href)}" target="_blank" rel="noopener">${esc(f.cta.label)} <span aria-hidden="true">→</span></a></div>` : ''}`;
+        return `<div class="tf-thanks-icon tf-a">${ICON.check}</div>${f.cta ? `<div class="tf-actions tf-a"><a class="tf-btn tf-btn-lg" href="${esc(f.cta.href)}" target="_blank" rel="noopener">${esc(f.cta.label)} <span aria-hidden="true">→</span></a></div>` : ''}
+          ${f.redirect?.url ? `<p class="tf-redirect tf-a" data-redirect>Redirecionando em <b>${f.redirect.delay ?? 5}</b> s…</p>` : ''}`;
+      case 'cep': {
+        const info = answers.__cep?.[f.id];
+        return `<div class="tf-field tf-a"><input class="tf-input" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="00000-000" value="${esc(v ?? '')}" aria-label="${esc(strip(recall(f.title)))}"><span class="tf-cep-spin" hidden><span class="tf-spinner"></span></span></div>
+          <div class="tf-cep-info tf-a" ${info ? '' : 'hidden'}>${info ? cepText(info) : ''}</div>${errBox}${okBtn()}`;
+      }
+      case 'cpf': case 'cnpj':
+        return `<div class="tf-field tf-a"><input class="tf-input" type="text" inputmode="numeric" autocomplete="off" placeholder="${f.type === 'cpf' ? '000.000.000-00' : '00.000.000/0000-00'}" value="${esc(v ?? '')}" aria-label="${esc(strip(recall(f.title)))}"></div>${errBox}${okBtn()}`;
+      case 'file': {
+        const maxMb = f.maxMb || 20;
+        const cur = answers.__files?.[f.id];
+        return `<label class="tf-drop tf-a ${cur ? 'has-file' : ''}"><input type="file" class="tf-file" ${f.accept ? `accept="${esc(f.accept)}"` : ''} hidden>
+            <span class="tf-drop-ic">⬆︎</span><span class="tf-drop-t">${cur ? esc(cur.name) : 'Clique pra escolher ou arraste o arquivo aqui'}</span><small>${cur ? 'Enviado ✓ · clique pra trocar' : `Até ${maxMb} MB${f.accept ? ' · ' + esc(f.accept.replace(/\./g, '').toUpperCase()) : ''}`}</small></label>
+          ${errBox}${okBtn(f.required ? 'Avançar' : cur ? 'Avançar' : 'Pular')}`;
+      }
+      case 'calendly': {
+        const u = new URL(f.url || 'https://calendly.com');
+        u.searchParams.set('embed_type', 'Inline'); u.searchParams.set('embed_domain', location.hostname); u.searchParams.set('hide_gdpr_banner', '1');
+        if (answers.nome) u.searchParams.set('name', answers.nome);
+        const mail = Object.values(answers).find((x) => typeof x === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(x));
+        if (mail) u.searchParams.set('email', mail);
+        return `<div class="tf-cal tf-a">${v ? `<div class="tf-cal-done">${ICON.check} Horário agendado</div>` : `<iframe src="${esc(u.toString())}" title="Agendar horário" loading="lazy"></iframe>`}</div>${errBox}
+          ${f.required && !v ? '' : okBtn(v ? 'Avançar' : 'Pular')}`;
+      }
       case 'short_text': case 'email': case 'number': case 'url': {
         const type = { email: 'email', number: 'text', url: 'url' }[f.type] || 'text';
         const mode = { email: 'email', number: 'numeric', url: 'url' }[f.type] || 'text';
@@ -201,6 +244,12 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     nav.hidden = f.type === 'welcome' || f.type === 'thankyou';
     root.querySelector('.tf-up').disabled = history.length === 0 || F[history.at(-1)].type === 'welcome';
     root.classList.toggle('is-ended', f.type === 'thankyou');
+    if (f.type === 'thankyou' && f.redirect?.url) {
+      let left = f.redirect.delay ?? 5;
+      const b = el.querySelector('[data-redirect] b');
+      const url = recall(f.redirect.url).replace(/&amp;/g, '&');
+      const iv = setInterval(() => { left--; if (b) b.textContent = Math.max(0, left); if (left <= 0) { clearInterval(iv); location.href = url; } }, 1000);
+    }
 
     // foca o input; em telas de escolha foca o slide (letras funcionam sem "pré-selecionar" visualmente a opção A)
     el.tabIndex = -1;
@@ -230,6 +279,8 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
         if (f.type === 'date') input.value = maskDate(input.value);
         if (f.transform === 'instagram') input.value = cleanInsta(input.value);
         if (f.type === 'number') input.value = input.value.replace(/[^\d.,-]/g, '');
+        if (f.type === 'cpf') input.value = maskCpf(input.value);
+        if (f.type === 'cnpj') input.value = maskCnpj(input.value);
         if (f.type === 'long_text') { autosize(input); const c = el.querySelector('.tf-count'); if (c) c.textContent = `${input.value.length}/${f.maxLength}`; }
         hideError(el);
       });
@@ -254,6 +305,9 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     }));
 
     if (f.type === 'dropdown') bindDropdown(el, f);
+    if (f.type === 'cep') bindCep(el, f);
+    if (f.type === 'file') bindFile(el, f);
+    if (f.type === 'calendly') bindCalendly(el, f);
   }
 
   function pick(el, f, btn) {
@@ -330,9 +384,60 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     input.addEventListener('blur', () => setTimeout(() => open(false), 120));
   }
 
+  // CEP: busca endereço no ViaCEP (cidade e estado melhoram a correspondência nos anúncios)
+  function bindCep(el, f) {
+    const input = el.querySelector('.tf-input'); const box = el.querySelector('.tf-cep-info'); const spin = el.querySelector('.tf-cep-spin');
+    const look = async () => {
+      const d = input.value.replace(/\D/g, '');
+      if (d.length !== 8) { box.hidden = true; return; }
+      spin.hidden = false;
+      try {
+        const r = await (await fetch(`https://viacep.com.br/ws/${d}/json/`)).json();
+        if (r.erro) throw new Error('cep');
+        answers.__cep = { ...(answers.__cep || {}), [f.id]: { cep: d, logradouro: r.logradouro, bairro: r.bairro, cidade: r.localidade, estado: r.uf } };
+        box.innerHTML = cepText(answers.__cep[f.id]); box.hidden = false; hideError(el);
+      } catch (e) { if (answers.__cep) delete answers.__cep[f.id]; box.hidden = true; showError(el, MSG.cep); }
+      spin.hidden = true;
+    };
+    input.addEventListener('input', () => { input.value = maskCep(input.value); if (input.value.replace(/\D/g, '').length === 8) look(); else box.hidden = true; });
+  }
+  function bindFile(el, f) {
+    const inp = el.querySelector('.tf-file'); const drop = el.querySelector('.tf-drop');
+    const send = async (file) => {
+      if (!file) return;
+      const maxMb = f.maxMb || 20;
+      if (file.size > maxMb * 1048576) return showError(el, `Arquivo maior que ${maxMb} MB`);
+      if (f.accept && !f.accept.split(',').some((a) => { a = a.trim().toLowerCase(); return a.endsWith('/*') ? file.type.startsWith(a.slice(0, -1)) : file.name.toLowerCase().endsWith(a) || file.type === a; }))
+        return showError(el, 'Tipo de arquivo não aceito');
+      drop.classList.add('is-uploading'); drop.querySelector('.tf-drop-t').textContent = 'Enviando ' + file.name + '…'; hideError(el);
+      try {
+        const path = upload ? await upload(file) : file.name;
+        answers[f.id] = path;
+        answers.__files = { ...(answers.__files || {}), [f.id]: { name: file.name, size: file.size } };
+        drop.classList.add('has-file'); drop.querySelector('.tf-drop-t').textContent = file.name; drop.querySelector('small').textContent = 'Enviado ✓ · clique pra trocar';
+        const ok = el.querySelector('.tf-ok'); if (ok) ok.textContent = 'Avançar';
+      } catch (e) { console.error(e); showError(el, 'Não conseguimos enviar o arquivo. Tente de novo.'); drop.querySelector('.tf-drop-t').textContent = 'Clique pra escolher ou arraste o arquivo aqui'; }
+      drop.classList.remove('is-uploading');
+    };
+    inp.addEventListener('change', () => send(inp.files[0]));
+    ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('is-over'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('is-over'); }));
+    drop.addEventListener('drop', (e) => send(e.dataTransfer.files[0]));
+  }
+  function bindCalendly(el, f) {
+    const onMsg = (e) => {
+      if (!/calendly\.com$/.test(new URL(e.origin).hostname) || e.data?.event !== 'calendly.event_scheduled') return;
+      answers[f.id] = 'Agendado' + (e.data.payload?.event?.uri ? ` (${e.data.payload.event.uri.split('/').pop()})` : '');
+      window.removeEventListener('message', onMsg);
+      if (F[cur] === f) next();
+    };
+    window.addEventListener('message', onMsg, { signal: ac.signal });
+  }
+
   // global: letras escolhem opções, Enter avança telas sem input
   document.addEventListener('keydown', (e) => {
     const f = F[cur];
+    if (!root.isConnected) return;
     if (!f || busy || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target.matches('input, textarea')) return;
     const el = stage.querySelector('.tf-slide:not(.is-leaving)');
@@ -346,10 +451,11 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
       const btn = el.querySelector(`[data-value="${e.key}"]`);
       if (btn) { e.preventDefault(); btn.click(); }
     }
-  });
+  }, { signal: ac.signal });
 
   // ---------- validação ----------
   function readValue(el, f) {
+    if (f.type === 'file' || f.type === 'calendly') return;
     const input = el.querySelector('.tf-input:not(.tf-other-input):not(.tf-dd-input)');
     if (!input) return;
     const raw = input.value.trim();
@@ -362,12 +468,17 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     const v = answers[f.id];
     const empty = v == null || v === '' || (Array.isArray(v) && !v.length) || Number.isNaN(v);
     if (f.type === 'consent' && f.required && !v) return MSG.consent;
+    if (empty && f.type === 'file' && f.required) return MSG.file;
     if (empty) {
       if (f.type === 'dropdown' && el.querySelector('.tf-dd-input').value.trim()) return 'Escolha uma opção da lista';
       if (f.type === 'number' && Number.isNaN(v)) return MSG.number;
       return f.required ? MSG.required : '';
     }
     if (f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return MSG.email;
+    if (f.type === 'email' && f.business && FREE_EMAIL.includes(String(v).split('@')[1].toLowerCase())) return MSG.business;
+    if (f.type === 'cpf' && !validCpf(v)) return MSG.cpf;
+    if (f.type === 'cnpj' && !validCnpj(v)) return MSG.cnpj;
+    if (f.type === 'cep' && !answers.__cep?.[f.id]) return MSG.cep;
     if (f.type === 'phone') { const d = v.replace(/\D/g, '').slice(2); if (d.length < 10 || d.length > 11) return MSG.phone; }
     if (f.type === 'url' && !/^(https?:\/\/)?[\w-]+(\.[\w-]+)+\S*$/i.test(v)) return MSG.url;
     if (f.type === 'number') {
@@ -464,10 +575,19 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
   function collect() {
     const path = [...history, cur];
     const list = path.map((i) => F[i]).filter((f) => QUESTION.includes(f.type) && answers[f.id] !== undefined && answers[f.id] !== '');
-    const out = {
-      answers: list.map((f) => ({ id: f.id, label: strip(recall(f.title)), value: Array.isArray(answers[f.id]) ? answers[f.id].join(', ') : String(answers[f.id]) }))
+    const show = (f) => {
+      const v = answers[f.id];
+      if (f.type === 'cep' && answers.__cep?.[f.id]) return cepText(answers.__cep[f.id], true);
+      if (f.type === 'file' && answers.__files?.[f.id]) return v;
+      return Array.isArray(v) ? v.join(', ') : String(v);
     };
-    list.forEach((f) => { if (f.map) out[f.map] = answers[f.id]; });
+    const out = {
+      answers: list.map((f) => ({ id: f.id, label: strip(recall(f.title)), value: show(f), ...(f.type === 'file' ? { type: 'file', file_name: answers.__files?.[f.id]?.name } : {}) }))
+    };
+    list.forEach((f) => {
+      if (f.map) out[f.map] = answers[f.id];
+      if (f.type === 'cep' && answers.__cep?.[f.id]) { const c = answers.__cep[f.id]; out.cep = c.cep; out.cidade = c.cidade; out.estado = out.estado || c.estado; }
+    });
     return out;
   }
 
@@ -481,13 +601,13 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
       guard.add(i);
       const f = F[i];
       const has = answers[f.id] !== undefined && answers[f.id] !== '' && !(Array.isArray(answers[f.id]) && !answers[f.id].length);
-      if (f.type === 'welcome' || (QUESTION.includes(f.type) && has) || f.type === 'statement') { history.push(i); i = resolveNext(i); continue; }
+      if (f.type === 'welcome' || (QUESTION.includes(f.type) && has) || f.type === 'statement' || f.type === 'testimonial') { history.push(i); i = resolveNext(i); continue; }
       break;
     }
     if (i < 0 || F[i].type === 'thankyou') i = history.pop() ?? 0;
     go(i, 0);
   } else go(0, 0);
-  return { answers, draft, go: (id) => go(idx[id], 1) };
+  return { answers, draft, go: (id) => { if (idx[id] != null) go(idx[id], 1); }, destroy: () => { ac.abort(); root.innerHTML = ''; } };
 }
 
 // ---------- helpers ----------
@@ -508,3 +628,29 @@ function cleanInsta(v) {
   return v.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/^\s*https?:\/\/(www\.)?instagram\.com\//i, '').replace(/[/?].*$/, '').replace(/@/g, '').replace(/\s+/g, '').toLowerCase();
 }
 function autosize(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 260) + 'px'; }
+function maskCep(v) { const d = v.replace(/\D/g, '').slice(0, 8); return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d; }
+function maskCpf(v) {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  return d.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2');
+}
+function maskCnpj(v) {
+  const d = v.replace(/\D/g, '').slice(0, 14);
+  return d.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d{1,2})$/, '$1-$2');
+}
+export function validCpf(v) {
+  const d = String(v).replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
+  const dig = (n) => { let s = 0; for (let i = 0; i < n; i++) s += +d[i] * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+  return dig(9) === +d[9] && dig(10) === +d[10];
+}
+export function validCnpj(v) {
+  const d = String(v).replace(/\D/g, '');
+  if (d.length !== 14 || /^(\d)\1+$/.test(d)) return false;
+  const dig = (n) => { const w = n === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; const s = w.reduce((a, x, i) => a + x * +d[i], 0); const r = s % 11; return r < 2 ? 0 : 11 - r; };
+  return dig(12) === +d[12] && dig(13) === +d[13];
+}
+function cepText(c, plain = false) {
+  const line = [c.logradouro, c.bairro].filter(Boolean).join(', ');
+  const t = `${c.cep.slice(0, 5)}-${c.cep.slice(5)} · ${c.cidade}/${c.estado}${line ? ' · ' + line : ''}`;
+  return plain ? t : '📍 ' + esc(t);
+}

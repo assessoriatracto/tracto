@@ -29,7 +29,7 @@ function loadGtag(firstId) {
   window.gtag('js', new Date());
 }
 
-export function createTracker({ form, visitorId, loadConfig }) {
+export function createTracker({ form, visitorId, loadConfig, extraGtm = [] }) {
   let cfg = null;
   let userData = {};
   const queue = [];
@@ -37,10 +37,20 @@ export function createTracker({ form, visitorId, loadConfig }) {
   const meta = () => cfg.pixels.filter((p) => p.platform === 'meta');
   const ga4 = () => cfg.pixels.filter((p) => p.platform === 'ga4');
   const ads = () => cfg.pixels.filter((p) => p.platform === 'google_ads');
+  const gtm = () => cfg.pixels.filter((p) => p.platform === 'gtm');
+  // Google Tag Manager recebe tudo pelo dataLayer (eventos tracto_*); as tags ficam configuradas no GTM
+  const dl = (event, data = {}) => { if (gtm().length) (window.dataLayer = window.dataLayer || []).push({ event, form_id: form.id, form_name: form.name, ...data }); };
 
   const ready = (async () => {
     try { cfg = (await loadConfig()) || FALLBACK; } catch (e) { cfg = FALLBACK; }
     if (!cfg.pixels?.length) cfg = { ...cfg, pixels: [] };
+    extraGtm.filter((id) => /^GTM-[A-Z0-9]+$/i.test(id) && !cfg.pixels.some((p) => p.id === id)).forEach((id) => cfg.pixels.push({ platform: 'gtm', id, events: {} }));
+    gtm().forEach((p) => {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+      const s = document.createElement('script'); s.async = true; s.src = 'https://www.googletagmanager.com/gtm.js?id=' + encodeURIComponent(p.id);
+      document.head.appendChild(s);
+    });
     if (meta().length) {
       loadMeta();
       // external_id igual ao que o servidor envia (visitante), melhora a correspondência e a deduplicação
@@ -64,23 +74,26 @@ export function createTracker({ form, visitorId, loadConfig }) {
 
   return {
     ready,
-    pageView() { run(() => metaEvent('page_view', 'PageView')); },
+    pageView() { run(() => { metaEvent('page_view', 'PageView'); dl('tracto_page_view'); }); },
     viewContent() {
       run(() => {
         metaEvent('view_content', 'ViewContent', { content_name: form.name, content_category: 'formulario' });
         gaEvent('view_content', 'form_view', { form_name: form.name });
+        dl('tracto_form_view');
       });
     },
     formStart() {
       run(() => {
         metaEvent('form_start', 'IniciouFormulario', { content_name: form.name }, undefined, true);
         gaEvent('form_start', 'form_start', { form_name: form.name });
+        dl('tracto_form_start');
       });
     },
     formStep(stepId, index, total) {
       run(() => {
         metaEvent('form_step', 'EtapaFormulario', { content_name: form.name, etapa: stepId, etapa_numero: index, etapas: total }, undefined, true);
         gaEvent('form_step', 'form_progress', { form_name: form.name, step: stepId, step_number: index, total_steps: total });
+        dl('tracto_form_step', { step: stepId, step_number: index, total_steps: total });
       });
     },
     // correspondência avançada assim que o lead informa os dados (o pixel faz o hash no navegador)
@@ -114,6 +127,8 @@ export function createTracker({ form, visitorId, loadConfig }) {
         gaEvent('lead', 'generate_lead', { form_name: form.name, transaction_id: eventId, ...money });
         ads().filter((p) => on(p, 'lead') && p.label).forEach((p) =>
           window.gtag('event', 'conversion', { send_to: `${p.id}/${p.label}`, transaction_id: eventId, ...money }));
+        dl('tracto_lead', { lead_event_id: eventId, faturamento, ...money,
+          user_data: { email: userData.em, phone_number: userData.ph ? '+' + userData.ph : undefined, address: { first_name: userData.fn, last_name: userData.ln, region: userData.st, country: 'BR' } } });
       });
     }
   };
