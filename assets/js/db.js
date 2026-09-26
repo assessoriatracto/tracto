@@ -107,10 +107,10 @@ const live = {
 
 
   // ---------- autenticação (login, cadastro, senha, 2FA) ----------
-  async signUp({ email, password, nome, consentVersion }) {
+  async signUp({ email, password, nome, phone, cargo, consentVersion }) {
     return must(await sb.auth.signUp({ email, password, options: {
       emailRedirectTo: location.origin + location.pathname + '#/confirmado',
-      data: { nome, consent_at: new Date().toISOString(), consent_version: consentVersion } } }));
+      data: { nome, phone, cargo, consent_at: new Date().toISOString(), consent_version: consentVersion } } }));
   },
   async resetPassword(email) { return must(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + '#/redefinir' })); },
   async updatePassword(password) { return must(await sb.auth.updateUser({ password })); },
@@ -153,7 +153,7 @@ const live = {
   },
 
   // ---------- financeiro ----------
-  async listAdAccounts() { return must(await sb.from('ad_accounts').select('id,created_at,platform,account_id,name,enabled,last_sync_at,last_error,access_token').order('created_at')); },
+  async listAdAccounts() { return must(await sb.from('ad_accounts').select('id,created_at,platform,account_id,name,enabled,last_sync_at,last_error,connected_via,token_expires_at,fb_user_name,currency').order('created_at')); },
   async saveAdAccount(a) { return must(await sb.from('ad_accounts').upsert(a).select().single()); },
   async deleteAdAccount(id) { return must(await sb.from('ad_accounts').delete().eq('id', id)); },
   async syncAds(accountId = null, days = 30) { return must(await sb.rpc('ads_sync', { p_account: accountId, p_days: days })); },
@@ -168,6 +168,13 @@ const live = {
   async listFinance(from, to) { return must(await sb.from('finance_entries').select('*').gte('date', from).lte('date', to).order('date', { ascending: false })); },
   async saveFinance(e) { return must(await sb.from('finance_entries').upsert(e).select().single()); },
   async deleteFinance(id) { return must(await sb.from('finance_entries').delete().eq('id', id)); },
+
+  // ---------- Facebook (login nativo) ----------
+  async getAppSettings() { return must(await sb.from('app_settings').select('meta_app_id').eq('id', 1).maybeSingle()); },
+  async saveAppSettings(patch) { return must(await sb.from('app_settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1)); },
+  async metaConnect(shortToken, fbUserId, fbUserName) { return must(await sb.rpc('meta_connect', { p_short_token: shortToken, p_fb_user_id: fbUserId, p_fb_user_name: fbUserName })); },
+  async metaConnectStatus(id) { return must(await sb.rpc('meta_connect_status', { p_id: id })); },
+  async metaActivate(id, accounts) { return must(await sb.rpc('meta_activate_accounts', { p_connection: id, p_accounts: accounts })); },
 
   // ---------- auditoria ----------
   async listAudit(limit = 200) { return must(await sb.from('audit_log').select('*').order('id', { ascending: false }).limit(limit)); },
@@ -515,6 +522,13 @@ const demo = {
   async listFinance(from, to) { return read(K.fin).filter((e) => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date)); },
   async saveFinance(e) { const all = read(K.fin); const i = all.findIndex((x) => x.id === e.id); const row = i >= 0 ? { ...all[i], ...e } : { id: uid(), created_at: now(), category: 'Outros', ...e }; if (i >= 0) all[i] = row; else all.push(row); write(K.fin, all); return row; },
   async deleteFinance(id) { write(K.fin, read(K.fin).filter((e) => e.id !== id)); },
+
+  // ---------- Facebook (só funciona conectado ao Supabase) ----------
+  async getAppSettings() { return read('tracto_v4_app', {}); },
+  async saveAppSettings(patch) { write('tracto_v4_app', { ...read('tracto_v4_app', {}), ...patch }); },
+  async metaConnect() { throw new Error('a conexão com o Facebook funciona só no CRM publicado'); },
+  async metaConnectStatus() { return { status: 'error' }; },
+  async metaActivate() { return 0; },
 
   // ---------- auditoria ----------
   async listAudit(limit = 200) { return read(K.audit).slice(0, limit); },
