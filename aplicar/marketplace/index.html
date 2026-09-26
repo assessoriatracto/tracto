@@ -34,7 +34,7 @@ function applyTheme(settings, { timer = true } = {}) {
   const st = document.documentElement.style;
   const lum = (hex) => { const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex || ''); if (!m) return 0.5; const [r, g, b] = m.slice(1).map((x) => parseInt(x, 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
   ['--tf-primary', '--tf-on-primary', '--tf-bg', '--tf-text'].forEach((v) => st.removeProperty(v));
-  if (th.primary) { st.setProperty('--tf-primary', th.primary); st.setProperty('--tf-on-primary', lum(th.primary) > 0.55 ? '#000' : '#fff'); }
+  if (th.primary) { st.setProperty('--tf-primary', th.primary); st.setProperty('--tf-on-primary', lum(th.primary) > 0.85 ? '#000' : '#fff'); }
   if (th.bg) { st.setProperty('--tf-bg', th.bg); document.querySelector('meta[name=theme-color]')?.setAttribute('content', th.bg); }
   if (th.text) st.setProperty('--tf-text', th.text);
   const img = document.querySelector('.tf-topbar img');

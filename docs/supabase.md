@@ -1,4 +1,4 @@
-# Formulários + CRM Tracto
+# Configuração do Supabase e visão geral
 
 - `assessoriatracto.com.br/aplicar/` formulário geral (réplica do Respondi FOD4RAan)
 - `assessoriatracto.com.br/aplicar/trafego/` Tráfego Pago (réplica do KIy9LLMN)
@@ -10,10 +10,8 @@ Sem Supabase configurado, form e CRM rodam em modo demo só no localhost. Em pro
 
 ## Publicar
 
-- Site e formulários: commit e push em `main` deste repo (GitHub Pages).
-- CRM: depois do push, rode `tools/publicar-crm.sh`. Ele copia `crm/` pro repo `assessoriatracto/crm`, que serve `crm.assessoriatracto.com.br`. O CRM carrega banco, formulários e config de `assessoriatracto.com.br`, então publique o site antes.
-- Formulário novo: adicione em `assets/js/forms.js` com um `slug` e rode `node tools/gerar-slugs.mjs`.
-- DNS (GoDaddy): `crm` CNAME `assessoriatracto.github.io`.
+Push na `main` publica tudo: o site pelo GitHub Pages e o CRM pelo GitHub Actions (`.github/workflows/publicar-crm.yml`).
+Formulário novo feito no construtor já fica no ar em `/aplicar/<endereço>/`, sem publicar nada.
 
 ## Ligar o Supabase
 

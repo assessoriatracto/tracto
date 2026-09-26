@@ -4,4 +4,6 @@ exclude:
   - crm
   - supabase
   - tools
+  - docs
+  - README.md
   - .claude

@@ -1,5 +1,5 @@
 /* Visual do formulário (identidade Tracto; cores vêm do tema do construtor) */
-:root{--tf-primary:#FFAD00;--tf-on-primary:#000;--tf-bg:#000;--tf-text:#fff;}
+:root{--tf-primary:#FFAD00;--tf-on-primary:#fff;--tf-bg:#000;--tf-text:#fff;}
 html,body{height:100%;overflow:hidden;}
 body{
   background:
@@ -118,7 +118,7 @@ body{
 .tf-btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;
   padding:10px 20px;border-radius:9px;border:none;cursor:pointer;text-decoration:none;
-  background:linear-gradient(90deg,var(--tf-primary) 0%,color-mix(in srgb, var(--tf-primary) 88%, #000) 100%);color:var(--tf-on-primary);font-family:var(--font);font-weight:700;font-size:16px;
+  background:linear-gradient(90deg,var(--tf-primary) 0%,color-mix(in srgb, var(--tf-primary) 78%, #000) 100%);color:var(--tf-on-primary);font-family:var(--font);font-weight:700;font-size:16px;text-shadow:0 1px 1px rgba(0,0,0,.18);
   transition:transform .15s,box-shadow .2s,filter .15s;
 }
 .tf-btn:hover{filter:brightness(1.07);box-shadow:0 8px 26px color-mix(in srgb, var(--tf-primary) 25%, transparent);}
@@ -127,7 +127,7 @@ body{
 .tf-hint{font-size:13px;color:var(--gray-3);}
 .tf-hint kbd{font-family:inherit;font-weight:700;color:var(--gray-2);}
 .tf-hint-block{display:block;margin-top:12px;}
-.tf-spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(0,0,0,.25);border-top-color:#000;animation:tf-spin .7s linear infinite;}
+.tf-spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:tf-spin .7s linear infinite;}
 @keyframes tf-spin{to{transform:rotate(360deg)}}
 
 .tf-error{display:none;margin-top:10px;padding:6px 10px;border-radius:6px;width:max-content;max-width:100%;background:#E5484D;color:#fff;font-size:14px;}
