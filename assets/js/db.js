@@ -60,6 +60,25 @@ const live = {
     }
   },
 
+  // ---------- integrações ----------
+  async listApiKeys() { return must(await sb.from('api_keys').select('id,created_at,name,prefix,last_used_at,revoked').order('created_at', { ascending: false })); },
+  async createApiKey(name) { return must(await sb.rpc('create_api_key', { p_name: name })); },
+  async revokeApiKey(id) { return must(await sb.from('api_keys').update({ revoked: true }).eq('id', id)); },
+  async listWebhooks() { return must(await sb.from('webhooks').select('*').order('created_at')); },
+  async saveWebhook(w) { return must(await sb.from('webhooks').upsert(w).select().single()); },
+  async deleteWebhook(id) { return must(await sb.from('webhooks').delete().eq('id', id)); },
+  async testWebhook(id) { return must(await sb.rpc('webhook_test', { p_id: id })); },
+  async listDeliveries(limit = 60) { return must(await sb.from('webhook_deliveries').select('id,created_at,webhook_id,event,lead_id,status_code,response,payload').order('id', { ascending: false }).limit(limit)); },
+  async getTracking() { return must(await sb.from('tracking_settings').select('*').eq('id', 1).maybeSingle()); },
+  async saveTracking(patch) { return must(await sb.from('tracking_settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1).select().single()); },
+  async testCapi() { return must(await sb.rpc('capi_test')); },
+  async listCapiEvents({ limit = 80, leadId } = {}) {
+    let q = sb.from('capi_events').select('id,created_at,lead_id,pixel_id,event_name,event_id,test,status_code,response,payload').order('id', { ascending: false }).limit(limit);
+    if (leadId) q = q.eq('lead_id', leadId);
+    return must(await q);
+  },
+  async refreshIntegrations() { try { await sb.rpc('integrations_refresh'); } catch (e) {} },
+
   subscribe(cb) {
     sb.channel('leads-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, (p) => cb(p.eventType, p.new))
@@ -70,21 +89,61 @@ const live = {
 // ============================================================
 // MODO DEMO (localStorage) — imita os triggers do banco
 // ============================================================
-const K = { leads: 'tracto_v2_leads', stages: 'tracto_v2_stages', labels: 'tracto_v2_labels', act: 'tracto_v2_activity', ev: 'tracto_v2_events' };
+const K = { leads: 'tracto_v2_leads', stages: 'tracto_v2_stages', labels: 'tracto_v2_labels', act: 'tracto_v2_activity', ev: 'tracto_v2_events',
+  track: 'tracto_v2_tracking', capi: 'tracto_v2_capi', keys: 'tracto_v2_apikeys', hooks: 'tracto_v2_webhooks', dels: 'tracto_v2_deliveries' };
 const read = (k, d = []) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } };
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const DEMO_ME = { id: 'demo-user', nome: 'Você (demo)', email: 'demo@tracto', ativo: true };
 const DEMO_TEAM = [DEMO_ME, { id: 'demo-isaque', nome: 'Isaque', email: 'isaque@tracto', ativo: true }, { id: 'demo-luiz', nome: 'Luiz', email: 'luiz@tracto', ativo: true }];
 
+const META_DEFAULTS = { 'Contato realizado': ['Contact', 'none'], 'Qualificado': ['LeadQualificado', 'lead'], 'Reunião agendada': ['Schedule', 'lead'], 'Venda realizada': ['Purchase', 'contract'] };
 function demoStages() {
   let s = read(K.stages, null);
   if (!s) {
     s = [['Em análise', '#6AA8FF', 'open'], ['Contato realizado', '#B58CFF', 'open'], ['Ligação', '#4FD1C5', 'open'], ['Qualificado', '#FFAD00', 'open'],
       ['Reunião agendada', '#FF8A3D', 'open'], ['Venda realizada', '#3DDC84', 'won'], ['Perdido', '#6B6B6B', 'lost']]
       .map(([name, color, kind], position) => ({ id: uid(), name, color, kind, position }));
-    write(K.stages, s);
   }
+  if (s.some((x) => !('meta_value' in x))) {
+    s = s.map((x) => ('meta_value' in x ? x : { ...x, meta_event: META_DEFAULTS[x.name]?.[0] || null, meta_value: META_DEFAULTS[x.name]?.[1] || 'none' }));
+    write(K.stages, s);
+  } else write(K.stages, s);
   return s.sort((a, b) => a.position - b.position);
+}
+const DEMO_TRACKING = {
+  id: 1, enabled: false, pixel_ids: ['1357841419671798', '2142406153298000'], access_token: null, test_event_code: null, api_version: 'v21.0',
+  send_lead: true, currency: 'BRL', contract_months: 12,
+  lead_values: { 'Menos de R$15.000': 50, 'De R$15.000 a R$30.000': 100, 'De R$30.000 a R$50.000': 200, 'De R$50.000 a R$100.000': 400, 'Acima de R$100.000': 800 }
+};
+const demoTracking = () => ({ ...DEMO_TRACKING, ...read(K.track, {}) });
+function demoLeadValue(l, mode) {
+  const t = demoTracking();
+  if (mode === 'lead') return t.lead_values[l.faturamento] ?? null;
+  if (mode === 'contract') return l.valor ? l.valor * t.contract_months : null;
+  return null;
+}
+// simula o que o banco faria (sem enviar nada): registra nos logs como "modo demo"
+function demoCapi(l, event, eventId, value, test = false) {
+  const t = demoTracking();
+  if (!t.access_token || !(t.enabled || test)) return 0;
+  const all = read(K.capi);
+  let n = 0;
+  for (const px of t.pixel_ids) {
+    if (!test && all.some((e) => e.event_id === eventId && e.pixel_id === px && !e.test)) continue;
+    all.unshift({ id: Date.now() + n, created_at: now(), lead_id: l.id, pixel_id: px, event_name: event, event_id: eventId, test, status_code: 0,
+      response: 'Modo demo: nada foi enviado à Meta', payload: { data: [{ event_name: event, event_id: eventId, custom_data: { value, currency: t.currency } }] } });
+    n++;
+  }
+  write(K.capi, all.slice(0, 500));
+  return n;
+}
+function demoHook(event, l, only) {
+  const hooks = read(K.hooks).filter((w) => w.active && (only ? w.id === only : w.events.includes(event)));
+  const dels = read(K.dels);
+  hooks.forEach((w, i) => dels.unshift({ id: Date.now() + i, created_at: now(), webhook_id: w.id, event, lead_id: l?.id || null, status_code: 0,
+    response: 'Modo demo: nada foi enviado', payload: { evento: event, dados: { lead: l ? { id: l.id, nome: l.nome, whatsapp: l.whatsapp } : null } } }));
+  write(K.dels, dels.slice(0, 500));
+  return hooks.length;
 }
 function log(leadId, type, body, who = DEMO_ME, at = now()) {
   const a = read(K.act);
@@ -113,8 +172,14 @@ const demo = {
       utm_content: p.utm_content || null, utm_term: p.utm_term || null, fbclid: p.fbclid || null,
       referrer: p.referrer || null, user_agent: p.user_agent || null, session_id: p.session_id || null
     };
+    lead.fbp = p.fbp || null; lead.fbc = p.fbc || null; lead.event_source_url = p.event_source_url || null;
+    lead.lead_event_id = p.lead_event_id || lead.id; lead.estado = p.estado || null; lead.client_ip = null;
     leads.unshift(lead); write(K.leads, leads);
     log(lead.id, 'created', 'Formulário preenchido: ' + (p.form_name || p.form_id), null, lead.created_at);
+    if (!p._created_at) {
+      demoHook('lead.created', lead);
+      if (demoTracking().send_lead) demoCapi(lead, 'Lead', lead.lead_event_id, demoLeadValue(lead, 'lead'));
+    }
     return lead.id;
   },
   async trackEvent(e) { const ev = read(K.ev); ev.push({ ...e, created_at: e.created_at || now() }); write(K.ev, ev.slice(-20000)); },
@@ -135,7 +200,15 @@ const demo = {
     const stages = demoStages();
     const leads = read(K.leads).map((l) => {
       if (!ids.includes(l.id)) return l;
-      if ('stage_id' in patch && patch.stage_id !== l.stage_id) log(l.id, 'stage', `Estágio: ${stages.find((s) => s.id === l.stage_id)?.name || 'sem estágio'} → ${stages.find((s) => s.id === patch.stage_id)?.name || 'sem estágio'}`);
+      if ('stage_id' in patch && patch.stage_id !== l.stage_id) {
+        log(l.id, 'stage', `Estágio: ${stages.find((s) => s.id === l.stage_id)?.name || 'sem estágio'} → ${stages.find((s) => s.id === patch.stage_id)?.name || 'sem estágio'}`);
+        const st = stages.find((s) => s.id === patch.stage_id);
+        const nl = { ...l, ...patch };
+        demoHook('lead.stage_changed', nl);
+        if (st?.kind === 'won') demoHook('lead.won', nl);
+        if (st?.kind === 'lost') demoHook('lead.lost', nl);
+        if (st?.meta_event) demoCapi(nl, st.meta_event, `${l.id}:${st.id}`, demoLeadValue(nl, st.meta_value));
+      }
       if ('assigned_to' in patch && patch.assigned_to !== l.assigned_to) log(l.id, 'assign', 'Atribuído a ' + (DEMO_TEAM.find((p) => p.id === patch.assigned_to)?.nome || 'ninguém'));
       if ('reminder_at' in patch && patch.reminder_at !== l.reminder_at) log(l.id, 'reminder', patch.reminder_at ? 'Lembrete para ' + fmtBR(patch.reminder_at) : 'Lembrete removido');
       return { ...l, ...patch, updated_at: now(), last_activity_at: now() };
@@ -183,6 +256,35 @@ const demo = {
   },
 
   async listEvents(sinceIso) { return read(K.ev).filter((e) => !sinceIso || e.created_at >= sinceIso); },
+
+  // ---------- integrações (demo) ----------
+  async listApiKeys() { return read(K.keys); },
+  async createApiKey(name) {
+    const key = 'trk_' + (uid() + uid()).replace(/-/g, '').slice(0, 48);
+    write(K.keys, [{ id: uid(), created_at: now(), name, prefix: key.slice(0, 12), last_used_at: null, revoked: false }, ...read(K.keys)]);
+    return key;
+  },
+  async revokeApiKey(id) { write(K.keys, read(K.keys).map((k) => (k.id === id ? { ...k, revoked: true } : k))); },
+  async listWebhooks() { return read(K.hooks); },
+  async saveWebhook(w) {
+    const all = read(K.hooks);
+    const i = all.findIndex((x) => x.id === w.id);
+    const row = i >= 0 ? { ...all[i], ...w } : { id: uid(), created_at: now(), active: true, secret: 'whsec_' + uid().replace(/-/g, ''), events: ['lead.created'], ...w };
+    if (i >= 0) all[i] = row; else all.push(row);
+    write(K.hooks, all); return row;
+  },
+  async deleteWebhook(id) { write(K.hooks, read(K.hooks).filter((w) => w.id !== id)); },
+  async testWebhook(id) { return demoHook('webhook.test', read(K.leads)[0], id); },
+  async listDeliveries(limit = 60) { return read(K.dels).slice(0, limit); },
+  async getTracking() { return demoTracking(); },
+  async saveTracking(patch) { write(K.track, { ...read(K.track, {}), ...patch }); return demoTracking(); },
+  async testCapi() {
+    const l = read(K.leads).find((x) => x.form_id !== 'manual');
+    if (!l) throw new Error('crie ou receba ao menos um lead pra testar');
+    return demoCapi(l, 'Lead', 'teste-' + uid(), demoLeadValue(l, 'lead'), true);
+  },
+  async listCapiEvents({ limit = 80, leadId } = {}) { return read(K.capi).filter((e) => !leadId || e.lead_id === leadId).slice(0, limit); },
+  async refreshIntegrations() {},
 
   subscribe(cb) { window.addEventListener('storage', (e) => { if (e.key === K.leads) cb('INSERT', null); }); },
 

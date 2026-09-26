@@ -37,9 +37,9 @@ fbq('track', 'PageView');
 
 <script src="/assets/js/tracto-config.js?v=3"></script>
 <script type="module">
-import { DB } from '/assets/js/db.js?v=3';
-import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=3';
-import { mountForm } from '/assets/js/form-engine.js?v=3';
+import { DB } from '/assets/js/db.js?v=4';
+import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=4';
+import { mountForm } from '/assets/js/form-engine.js?v=4';
 
 const params = new URLSearchParams(location.search);
 // /aplicar/<slug>/ define o formulário; ?f=<id> continua funcionando
@@ -51,25 +51,44 @@ try { sid = sessionStorage.getItem('tf_sid') || crypto.randomUUID(); sessionStor
 catch (e) { sid = crypto.randomUUID(); }
 const utm = (k) => params.get(k) || null;
 
-const track = (event, step_id = null) => DB.trackEvent({
-  form_id: form.id, session_id: sid, event, step_id,
-  utm_source: utm('utm_source'), utm_campaign: utm('utm_campaign')
-}).catch(() => {});
+const track = (event, step_id = null) => {
+  if (event === 'start' && window.fbq) fbq('trackCustom', 'IniciouFormulario', { content_name: form.name });
+  return DB.trackEvent({
+    form_id: form.id, session_id: sid, event, step_id,
+    utm_source: utm('utm_source'), utm_campaign: utm('utm_campaign')
+  }).catch(() => {});
+};
+
+// identificadores da Meta: _fbp (navegador) e _fbc (clique no anúncio)
+const cookie = (n) => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || null;
+const fbclid = utm('fbclid');
+const fbc = cookie('_fbc') || (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
+const PIXELS = ['1357841419671798', '2142406153298000'];
 
 track('view');
 
 mountForm(document.getElementById('form'), form, {
   track,
   async submit(data) {
+    // mesmo ID no Pixel e na Conversions API: a Meta deduplica e fica com o evento mais completo
+    const eventId = crypto.randomUUID();
     await DB.submitLead({
       ...data,
       form_id: form.id, form_name: form.name, session_id: sid,
+      lead_event_id: eventId, fbp: cookie('_fbp'), fbc, event_source_url: location.href,
       utm_source: utm('utm_source'), utm_medium: utm('utm_medium'), utm_campaign: utm('utm_campaign'),
       utm_content: utm('utm_content'), utm_term: utm('utm_term'), fbclid: utm('fbclid'), gclid: utm('gclid'),
       referrer: document.referrer || null, user_agent: navigator.userAgent.slice(0, 300)
     });
     track('submit');
-    if (window.fbq) fbq('track', 'Lead', { content_name: form.name });
+    if (window.fbq) {
+      // correspondência avançada: o pixel faz o hash no navegador antes de enviar
+      const [fn, ...rest] = String(data.nome || '').trim().toLowerCase().split(/\s+/);
+      const am = { em: data.email?.toLowerCase(), ph: String(data.whatsapp || '').replace(/\D/g, ''), fn, ln: rest.at(-1), country: 'br', st: data.estado?.toLowerCase() };
+      Object.keys(am).forEach((k) => !am[k] && delete am[k]);
+      PIXELS.forEach((id) => fbq('init', id, am));
+      fbq('track', 'Lead', { content_name: form.name, content_category: 'lead', currency: 'BRL' }, { eventID: eventId });
+    }
   }
 });
 </script>

@@ -4,7 +4,7 @@
 //        choice (única) | multi (caixas de seleção) | dropdown | yes_no | rating | scale | consent | thankyou
 // Propriedades comuns:
 //   id, title (HTML confiável; {{campo}} ou {{campo:first}} insere resposta), desc, required,
-//   placeholder, map ('nome' | 'whatsapp' | 'email' | 'instagram' | 'faturamento' → coluna do CRM)
+//   placeholder, map ('nome' | 'whatsapp' | 'email' | 'instagram' | 'faturamento' | 'estado' | 'cidade' → coluna do CRM)
 //   showIf: condição pra exibir o campo (senão é pulado)
 //   logic:  [{ if: condição, jump: 'idDoCampo' }] avaliada ao sair do campo (primeira que bater vence)
 //   next:   'idDoCampo' pula incondicionalmente
@@ -103,7 +103,7 @@ export const FORMS = {
       { id: 'whatsapp', type: 'phone', title: 'Prazer, {{nome:first}}! Qual seu número de Whatsapp?', required: true, map: 'whatsapp' },
       { id: 'email', type: 'email', title: 'E o seu melhor e-mail?', desc: 'Opcional.', required: false, map: 'email' },
       { id: 'loja', type: 'short_text', title: 'Qual o nome da loja?', required: true, placeholder: 'Ex: Casa do Construtor' },
-      { id: 'uf', type: 'dropdown', title: 'Em qual estado fica a {{loja}}?', required: true, options: ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'] },
+      { id: 'uf', type: 'dropdown', title: 'Em qual estado fica a {{loja}}?', required: true, map: 'estado', options: ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'] },
       { id: 'segmento', type: 'choice', title: 'Qual melhor descreve a {{loja}}?', required: true, options: ['Materiais de construção', 'Ferragista', 'Tintas', 'Elétrica e hidráulica', 'Pisos e acabamentos'], other: true },
       {
         id: 'canais', type: 'multi', title: 'Onde vocês vendem hoje?', required: true, min: 1,

@@ -1,8 +1,8 @@
 // Páginas "Formulários" e "Ajustes"
 import { DB, LIVE } from '@shared/db.js';
 import { formPath } from '@shared/forms.js';
-import { S, $, $$, esc, COLORS, num, pct, toast, fail, confirmBox } from './util.js?v=3';
-import { stageModal, moveStage, deleteStageFlow } from './app.js?v=3';
+import { S, $, $$, esc, COLORS, num, pct, toast, fail, confirmBox } from './util.js?v=4';
+import { stageModal, moveStage, deleteStageFlow } from './app.js?v=4';
 
 const QTYPES = ['short_text', 'long_text', 'email', 'phone', 'number', 'url', 'date', 'choice', 'multi', 'dropdown', 'yes_no', 'rating', 'scale', 'consent'];
 const SITE = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? location.origin : (window.TRACTO_CONFIG?.siteUrl || location.origin);

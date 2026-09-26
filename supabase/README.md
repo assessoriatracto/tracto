@@ -24,11 +24,18 @@ Sem Supabase configurado, form e CRM rodam em modo demo só no localhost. Em pro
 5. Authentication > URL Configuration: Site URL `https://crm.assessoriatracto.com.br`.
 6. Authentication > Users > Add user: crie seu login. O primeiro usuário vira ativo automaticamente; os próximos entram inativos e você libera em CRM > Ajustes > Equipe.
 
+## Integrações e Pixel (CRM)
+
+- **Integrações**: chaves de API (`trk_…`) pra criar, listar e atualizar leads de outros sistemas, e webhooks assinados (HMAC-SHA256) para os eventos `lead.created`, `lead.stage_changed`, `lead.won`, `lead.lost`, `lead.assigned`, `lead.updated`, `note.created` e `lead.deleted`. A documentação com exemplos fica dentro da própria aba.
+- **Pixel**: Meta Conversions API enviada pelo banco. Cole o token no CRM e ative. O Lead do formulário vai com o mesmo `event_id` do Pixel do navegador (deduplicação), e cada estágio do pipeline pode enviar um evento (Contact, Schedule, Purchase…) com valor estimado ou valor do contrato.
+- Os envios usam a extensão `pg_net` do Supabase, que o schema ativa. Se ela não estiver disponível, os leads continuam sendo gravados normalmente e os logs mostram "pg_net indisponível".
+
 ## Segurança
 
 - O visitante do site só consegue chamar `submit_lead` (valida e normaliza no servidor) e registrar eventos do form. Não lê nem altera nada.
 - Só membros ativos da equipe (`profiles.ativo`) leem e editam leads, estágios, rótulos e histórico.
 - A anon key é pública por design; a proteção está nas policies de RLS.
+- O token da Meta e os segredos dos webhooks só são lidos pela equipe ativa. As chaves de API ficam salvas só como hash.
 
 ## Editar perguntas
 
