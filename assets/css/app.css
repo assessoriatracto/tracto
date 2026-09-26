@@ -1,0 +1,65 @@
+/* Base compartilhada de /aplicar e /crm (identidade Tracto) */
+@font-face{font-family:"Archivo Condensed";src:url("../fonts/ArchivoCondensed-Regular.woff2") format("woff2");font-weight:400;font-display:swap;}
+@font-face{font-family:"Archivo Condensed";src:url("../fonts/ArchivoCondensed-SemiBold.woff2") format("woff2");font-weight:600;font-display:swap;}
+@font-face{font-family:"Aspekta";src:url("../fonts/Aspekta-400.woff2") format("woff2");font-weight:400;font-display:swap;}
+@font-face{font-family:"Aspekta";src:url("../fonts/Aspekta-700.woff2") format("woff2");font-weight:700;font-display:swap;}
+@font-face{font-family:"PP Editorial Old";src:url("../fonts/PPEditorialOld-Italic.woff2") format("woff2");font-weight:400;font-style:italic;font-display:swap;}
+
+:root{
+  --black:#000;
+  --bg:#050505;
+  --amber:#FFAD00;
+  --amber-dark:#996700;
+  --amber-soft:rgba(255,173,0,.12);
+  --card:#111;
+  --card-2:#1A1A1A;
+  --border:#242424;
+  --border-soft:rgba(255,255,255,.09);
+  --white:#fff;
+  --gray-1:#D3D3D3;
+  --gray-2:#AFAFAF;
+  --gray-3:#7A7A7A;
+  --green:#3DDC84;
+  --red:#FF5C5C;
+  --blue:#6AA8FF;
+  --radius:15px;
+  --font:"Aspekta","Montserrat",system-ui,sans-serif;
+  --font-cond:"Archivo Condensed","Aspekta",sans-serif;
+  --font-serif:"PP Editorial Old",Georgia,serif;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;}
+body{
+  background:var(--black);
+  color:var(--white);
+  font-family:var(--font);
+  -webkit-font-smoothing:antialiased;
+}
+/* grão do site */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.05;mix-blend-mode:plus-lighter;
+  background-image:radial-gradient(at 20% 80%,#fff 1px,transparent 0);background-size:2px 2px;
+}
+em{font-family:var(--font-serif);font-style:italic;color:var(--amber);font-weight:400;}
+button,input,select,textarea{font:inherit;color:inherit;}
+a{color:inherit;}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  border:none;cursor:pointer;text-decoration:none;
+  font-family:var(--font);font-size:16px;
+  transition:transform .2s ease,box-shadow .2s ease,background .2s ease,opacity .2s;
+}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn-pill{
+  background:linear-gradient(90deg,#FFAB00 0%,#996700 100%);
+  border:1px solid #FFAB00;color:#fff;border-radius:60px;padding:16px 26px;
+}
+.btn-pill:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 10px 30px rgba(255,173,0,.25);}
+.btn-ghost{background:transparent;border:1px solid var(--border-soft);color:var(--gray-1);border-radius:10px;padding:10px 14px;font-size:14px;}
+.btn-ghost:hover{border-color:rgba(255,173,0,.5);color:#fff;}
+.chev{font-size:20px;line-height:1;}
+
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px;}

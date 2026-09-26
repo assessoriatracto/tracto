@@ -1,0 +1,7 @@
+# GitHub Pages (Jekyll): o que NÃO vai para assessoriatracto.com.br.
+# O CRM é publicado em crm.assessoriatracto.com.br pelo tools/publicar-crm.sh.
+exclude:
+  - crm
+  - supabase
+  - tools
+  - .claude

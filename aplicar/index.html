@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Falta pouco para destravar as vendas da sua loja | Tracto</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="/assets/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/assets/img/favicon.svg">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="stylesheet" href="/assets/css/app.css?v=3">
+<link rel="stylesheet" href="/aplicar/form.css?v=2">
+
+<!-- Meta Pixel Code -->
+<script>
+!function(f,b,e,v,n,t,s)
+{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+n.queue=[];t=b.createElement(e);t.async=!0;
+t.src=v;s=b.getElementsByTagName(e)[0];
+s.parentNode.insertBefore(t,s)}(window, document,'script',
+'https://connect.facebook.net/en_US/fbevents.js');
+fbq('init', '1357841419671798');
+fbq('init', '2142406153298000');
+fbq('track', 'PageView');
+</script>
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1357841419671798&ev=PageView&noscript=1"/><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=2142406153298000&ev=PageView&noscript=1"/></noscript>
+<!-- End Meta Pixel Code -->
+</head>
+<body>
+
+<header class="tf-topbar"><img src="/assets/img/tracto-logo.svg?v=3" alt="Tracto"></header>
+<main class="tf-root" id="form"></main>
+<div class="tf-brandmark">Tracto <b>Assessoria de Marketing</b></div>
+
+<script src="/assets/js/tracto-config.js?v=3"></script>
+<script type="module">
+import { DB } from '/assets/js/db.js?v=3';
+import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=3';
+import { mountForm } from '/assets/js/form-engine.js?v=3';
+
+const params = new URLSearchParams(location.search);
+// /aplicar/<slug>/ define o formulário; ?f=<id> continua funcionando
+const slug = (location.pathname.match(/\/aplicar\/([^/]+)/) || [])[1];
+const form = (slug && formBySlug(slug)) || FORMS[params.get('f')] || FORMS[DEFAULT_FORM];
+
+let sid;
+try { sid = sessionStorage.getItem('tf_sid') || crypto.randomUUID(); sessionStorage.setItem('tf_sid', sid); }
+catch (e) { sid = crypto.randomUUID(); }
+const utm = (k) => params.get(k) || null;
+
+const track = (event, step_id = null) => DB.trackEvent({
+  form_id: form.id, session_id: sid, event, step_id,
+  utm_source: utm('utm_source'), utm_campaign: utm('utm_campaign')
+}).catch(() => {});
+
+track('view');
+
+mountForm(document.getElementById('form'), form, {
+  track,
+  async submit(data) {
+    await DB.submitLead({
+      ...data,
+      form_id: form.id, form_name: form.name, session_id: sid,
+      utm_source: utm('utm_source'), utm_medium: utm('utm_medium'), utm_campaign: utm('utm_campaign'),
+      utm_content: utm('utm_content'), utm_term: utm('utm_term'), fbclid: utm('fbclid'), gclid: utm('gclid'),
+      referrer: document.referrer || null, user_agent: navigator.userAgent.slice(0, 300)
+    });
+    track('submit');
+    if (window.fbq) fbq('track', 'Lead', { content_name: form.name });
+  }
+});
+</script>
+</body>
+</html>
