@@ -114,6 +114,8 @@ const live = {
   },
   async resetPassword(email) { return must(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/redefinir' })); },
   async updatePassword(password) { return must(await sb.auth.updateUser({ password })); },
+  // troca de e-mail: a Supabase manda confirmação pro e-mail novo e pro atual
+  async updateEmail(email) { return must(await sb.auth.updateUser({ email }, { emailRedirectTo: location.origin + '/leads' })); },
   async resendConfirmation(email) { return must(await sb.auth.resend({ type: 'signup', email })); },
   onAuth(cb) { return sb.auth.onAuthStateChange((event, session) => cb(event, session)); },
   async mfaFactors() { return must(await sb.auth.mfa.listFactors()).totp || []; },
@@ -386,6 +388,7 @@ const demo = {
   async signUp() { return { user: null }; },
   async resetPassword() {},
   async updatePassword() {},
+  async updateEmail() {},
   async resendConfirmation() {},
   onAuth() {},
   async mfaFactors() { return read('tracto_v4_mfa', []); },
