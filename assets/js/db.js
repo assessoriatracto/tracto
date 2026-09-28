@@ -159,6 +159,11 @@ const live = {
   async saveAdAccount(a) { return must(await sb.from('ad_accounts').upsert(a).select().single()); },
   async deleteAdAccount(id) { return must(await sb.from('ad_accounts').delete().eq('id', id)); },
   async syncAds(accountId = null, days = 30) { return must(await sb.rpc('ads_sync', { p_account: accountId, p_days: days })); },
+  // importação de leads (planilhas e formulários da Meta)
+  async importLeads(rows, origin, formName) { return must(await sb.rpc('import_leads', { p_rows: rows, p_origin: origin, p_form_name: formName })); },
+  async metaLeadsStatus() { return must(await sb.rpc('meta_leads_status')); },
+  async metaLeadsSync() { return must(await sb.rpc('meta_leads_sync')); },
+  async metaLeadsProcess() { return must(await sb.rpc('meta_leads_process')); },
   async processAds() { try { return must(await sb.rpc('ads_sync_process')); } catch (e) { return 0; } },
   async listInsights(from, to) {
     const out = []; let i = 0;
@@ -520,6 +525,19 @@ const demo = {
     write(K.ins, ins); write(K.adacc, read(K.adacc).map((x) => accs.find((a) => a.id === x.id) || x));
     return accs.length;
   },
+  async importLeads(rows, origin, formName) {
+    const all = read(K.leads); let ok = 0, skip = 0;
+    rows.forEach((r) => {
+      const ph = String(r.whatsapp || '').replace(/\D/g, ''); const em = String(r.email || '').toLowerCase();
+      if ((!ph && !em) || all.some((l) => (ph && String(l.whatsapp || '').endsWith(ph.slice(-10))) || (em && l.email === em))) { skip++; return; }
+      all.push({ id: uid(), created_at: r.created_at || now(), nome: r.nome || 'Sem nome', whatsapp: ph ? (ph.length <= 11 ? '55' + ph : ph) : null, email: em || null, instagram: r.instagram || null, faturamento: r.faturamento || null, form_id: origin, form_name: formName, answers: r.answers || [], source: r.utm_campaign ? 'pago' : 'organico', utm_campaign: r.utm_campaign || null, label_ids: [], stage_id: demoStages()[0]?.id, imported_from: origin });
+      ok++;
+    });
+    write(K.leads, all); return { importados: ok, ignorados: skip };
+  },
+  async metaLeadsStatus() { return { pages: 0, forms: [], total_leads: 0, imported: 0, pending: 0 }; },
+  async metaLeadsSync() { return 0; },
+  async metaLeadsProcess() { return 0; },
   async processAds() { return 0; },
   async listInsights(from, to) { return read(K.ins).filter((r) => r.date >= from && r.date <= to); },
   async listFinance(from, to) { return read(K.fin).filter((e) => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date)); },
