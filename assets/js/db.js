@@ -109,10 +109,10 @@ const live = {
   // ---------- autenticação (login, cadastro, senha, 2FA) ----------
   async signUp({ email, password, nome, phone, cargo, consentVersion }) {
     return must(await sb.auth.signUp({ email, password, options: {
-      emailRedirectTo: location.origin + location.pathname + '#/confirmado',
+      emailRedirectTo: location.origin + '/confirmado',
       data: { nome, phone, cargo, consent_at: new Date().toISOString(), consent_version: consentVersion } } }));
   },
-  async resetPassword(email) { return must(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname + '#/redefinir' })); },
+  async resetPassword(email) { return must(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/redefinir' })); },
   async updatePassword(password) { return must(await sb.auth.updateUser({ password })); },
   async resendConfirmation(email) { return must(await sb.auth.resend({ type: 'signup', email })); },
   onAuth(cb) { return sb.auth.onAuthStateChange((event, session) => cb(event, session)); },
