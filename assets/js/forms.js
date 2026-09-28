@@ -18,7 +18,7 @@ const waLink = (msg = WA_MSG) => `https://wa.me/${WA}?text=${encodeURIComponent(
 const FATURAMENTO = ['Menos de R$15.000', 'De R$15.000 a R$30.000', 'De R$30.000 a R$50.000', 'De R$50.000 a R$100.000', 'Acima de R$100.000'];
 const ALTO = ['De R$50.000 a R$100.000', 'Acima de R$100.000'];
 
-const WELCOME_TITLE = '<strong>Falta pouco para destravar as vendas da sua FERRAGISTA E LOJA DE CONSTRUÇÃO! 🚀</strong>';
+const WELCOME_TITLE = '<strong>Falta pouco para destravar as vendas da sua FERRAGISTA E LOJA DE CONSTRUÇÃO!</strong>';
 
 // campos idênticos nos 3 forms do Respondi
 const base = (exp) => [
@@ -33,7 +33,7 @@ const base = (exp) => [
   },
   {
     id: 'obrigado', type: 'thankyou', title: 'Obrigado por responder!',
-    desc: 'Em breve nossa equipe entrará em contato. Você pode falar conosco agora no WhatsApp 👇',
+    desc: 'Em breve nossa equipe entrará em contato. Você pode falar conosco agora no WhatsApp.',
     cta: { label: 'ENVIAR MENSAGEM', href: waLink() }
   }
 ];
@@ -136,7 +136,7 @@ export const FORMS = {
       },
       {
         id: 'obrigado', type: 'thankyou', title: 'Obrigado por responder!',
-        desc: 'Em breve nossa equipe entrará em contato. Você pode falar conosco agora no WhatsApp 👇',
+        desc: 'Em breve nossa equipe entrará em contato. Você pode falar conosco agora no WhatsApp.',
         cta: { label: 'ENVIAR MENSAGEM', href: waLink() }
       }
     ]

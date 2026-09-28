@@ -9,6 +9,12 @@ const ICON = {
   star: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></svg>',
   caret: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>'
 };
+const IC = {
+  star: (on) => `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>`,
+  upload: '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
+  pin: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  br: '<svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true"><rect width="22" height="16" rx="2.5" fill="#009B3A"/><path d="M11 2.2 19.6 8 11 13.8 2.4 8z" fill="#FEDF00"/><circle cx="11" cy="8" r="3.2" fill="#002776"/></svg>'
+};
 const MSG = {
   required: 'Essa resposta é obrigatória',
   email: 'Hmm, esse e-mail não parece válido',
@@ -149,7 +155,7 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
       case 'statement':
         return okBtn(esc(f.button || 'Continuar'));
       case 'testimonial': {
-        const stars = f.rating ? `<div class="tf-stars tf-a" aria-label="${f.rating} de 5">${'★'.repeat(f.rating)}${'☆'.repeat(5 - f.rating)}</div>` : '';
+        const stars = f.rating ? `<div class="tf-stars tf-a" aria-label="${f.rating} de 5">${[1, 2, 3, 4, 5].map((n) => IC.star(n <= f.rating)).join('')}</div>` : '';
         return `${f.title ? `<p class="tf-kicker tf-a">${recall(f.title)}</p>` : ''}${stars}
           <blockquote class="tf-quote tf-a">“${recall(f.quote || '')}”</blockquote>
           <div class="tf-author tf-a">${f.photo ? `<img src="${esc(f.photo)}" alt="">` : `<span class="tf-author-av">${esc((f.author || '?').slice(0, 1))}</span>`}<div><b>${esc(f.author || '')}</b>${f.role ? `<span>${esc(f.role)}</span>` : ''}</div></div>
@@ -169,7 +175,7 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
         const maxMb = f.maxMb || 20;
         const cur = answers.__files?.[f.id];
         return `<label class="tf-drop tf-a ${cur ? 'has-file' : ''}"><input type="file" class="tf-file" ${f.accept ? `accept="${esc(f.accept)}"` : ''} hidden>
-            <span class="tf-drop-ic">⬆︎</span><span class="tf-drop-t">${cur ? esc(cur.name) : 'Clique pra escolher ou arraste o arquivo aqui'}</span><small>${cur ? 'Enviado ✓ · clique pra trocar' : `Até ${maxMb} MB${f.accept ? ' · ' + esc(f.accept.replace(/\./g, '').toUpperCase()) : ''}`}</small></label>
+            <span class="tf-drop-ic">${IC.upload}</span><span class="tf-drop-t">${cur ? esc(cur.name) : 'Clique pra escolher ou arraste o arquivo aqui'}</span><small>${cur ? `<span class="tf-sent">${ICON.check}Enviado</span> · clique pra trocar` : `Até ${maxMb} MB${f.accept ? ' · ' + esc(f.accept.replace(/\./g, '').toUpperCase()) : ''}`}</small></label>
           ${errBox}${okBtn(f.required ? 'Avançar' : cur ? 'Avançar' : 'Pular')}`;
       }
       case 'calendly': {
@@ -189,7 +195,7 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
         return `<div class="tf-field tf-a">${insta ? '<span class="tf-prefix">@</span>' : ''}<input class="tf-input" type="${type}" inputmode="${mode}" autocomplete="${auto}" placeholder="${esc(f.placeholder || 'Sua resposta...')}" value="${esc(v ?? '')}" ${f.maxLength ? `maxlength="${f.maxLength}"` : ''} ${insta || f.type !== 'short_text' ? 'autocapitalize="off" spellcheck="false"' : ''} aria-label="${esc(strip(recall(f.title)))}"></div>${errBox}${okBtn()}`;
       }
       case 'phone':
-        return `<div class="tf-field tf-a"><span class="tf-prefix tf-flag">🇧🇷 +55</span><input class="tf-input" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${esc(f.placeholder || '(62) 99999-9999')}" value="${esc(v ? maskPhone(String(v).replace(/^\+?55/, '')) : '')}" aria-label="${esc(strip(recall(f.title)))}"></div>${errBox}${okBtn()}`;
+        return `<div class="tf-field tf-a"><span class="tf-prefix tf-flag">${IC.br}<span>+55</span></span><input class="tf-input" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="${esc(f.placeholder || '(62) 99999-9999')}" value="${esc(v ? maskPhone(String(v).replace(/^\+?55/, '')) : '')}" aria-label="${esc(strip(recall(f.title)))}"></div>${errBox}${okBtn()}`;
       case 'date':
         return `<div class="tf-field tf-a"><input class="tf-input" type="text" inputmode="numeric" placeholder="DD/MM/AAAA" value="${esc(v ?? '')}" aria-label="${esc(strip(recall(f.title)))}"></div>${errBox}${okBtn()}`;
       case 'long_text':
@@ -414,7 +420,7 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
         const path = upload ? await upload(file) : file.name;
         answers[f.id] = path;
         answers.__files = { ...(answers.__files || {}), [f.id]: { name: file.name, size: file.size } };
-        drop.classList.add('has-file'); drop.querySelector('.tf-drop-t').textContent = file.name; drop.querySelector('small').textContent = 'Enviado ✓ · clique pra trocar';
+        drop.classList.add('has-file'); drop.querySelector('.tf-drop-t').textContent = file.name; drop.querySelector('small').innerHTML = `<span class="tf-sent">${ICON.check}Enviado</span> · clique pra trocar`;
         const ok = el.querySelector('.tf-ok'); if (ok) ok.textContent = 'Avançar';
       } catch (e) { console.error(e); showError(el, 'Não conseguimos enviar o arquivo. Tente de novo.'); drop.querySelector('.tf-drop-t').textContent = 'Clique pra escolher ou arraste o arquivo aqui'; }
       drop.classList.remove('is-uploading');
@@ -652,5 +658,5 @@ export function validCnpj(v) {
 function cepText(c, plain = false) {
   const line = [c.logradouro, c.bairro].filter(Boolean).join(', ');
   const t = `${c.cep.slice(0, 5)}-${c.cep.slice(5)} · ${c.cidade}/${c.estado}${line ? ' · ' + line : ''}`;
-  return plain ? t : '📍 ' + esc(t);
+  return plain ? t : `<span class="tf-pin">${IC.pin}</span>${esc(t)}`;
 }

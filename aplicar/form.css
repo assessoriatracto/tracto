@@ -66,7 +66,8 @@ body{
 .tf-input{width:100%;background:transparent;border:none;outline:none;padding:10px 0 12px;font-size:clamp(20px,3.2vw,28px);color:var(--tf-text);border-radius:0;min-width:0;}
 .tf-input::placeholder{color:color-mix(in srgb, var(--tf-primary) 32%, transparent);}
 .tf-prefix{font-size:clamp(20px,3.2vw,28px);color:var(--gray-3);white-space:nowrap;}
-.tf-flag{font-size:clamp(16px,2.2vw,20px);}
+.tf-flag{display:inline-flex;align-items:center;gap:8px;font-size:clamp(16px,2.2vw,20px);}
+.tf-flag svg{flex:none;border-radius:3px;}
 .tf-textarea{resize:none;line-height:1.4;overflow-y:auto;font-family:inherit;}
 .tf-field-long{align-items:flex-end;}
 .tf-count{font-size:12px;color:var(--gray-3);padding-bottom:14px;white-space:nowrap;}
@@ -171,7 +172,7 @@ body{
 .tf-privacy{margin-top:18px;font-size:12.5px;color:var(--gray-3);max-width:520px;line-height:1.5;}
 .tf-privacy a{color:var(--gray-2);}
 .tf-kicker{font-family:var(--font-cond);font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:13px;color:var(--tf-primary);margin:0 0 12px;}
-.tf-stars{color:var(--tf-primary);font-size:20px;letter-spacing:3px;margin-bottom:10px;}
+.tf-stars{display:flex;gap:4px;color:var(--tf-primary);margin-bottom:12px;}
 .tf-quote{margin:0 0 20px;font-family:var(--font-serif);font-style:italic;font-size:clamp(22px,3.4vw,32px);line-height:1.35;color:var(--tf-text);}
 .tf-author{display:flex;align-items:center;gap:12px;}
 .tf-author img,.tf-author-av{width:48px;height:48px;border-radius:50%;object-fit:cover;flex:none;}
@@ -184,7 +185,10 @@ body{
 .tf-drop:hover,.tf-drop.is-over{background:color-mix(in srgb, var(--tf-primary) 8%, transparent);border-color:var(--tf-primary);}
 .tf-drop.has-file{border-style:solid;}
 .tf-drop.is-uploading{opacity:.7;pointer-events:none;}
-.tf-drop-ic{font-size:26px;color:var(--tf-primary);}
+.tf-drop-ic{display:grid;place-items:center;width:48px;height:48px;border-radius:12px;color:var(--tf-primary);background:color-mix(in srgb, var(--tf-primary) 10%, transparent);}
+.tf-sent{display:inline-flex;align-items:center;gap:4px;color:var(--tf-primary);font-weight:600;}
+.tf-sent svg{width:13px;height:13px;}
+.tf-pin{display:inline-flex;vertical-align:-3px;margin-right:6px;color:var(--tf-primary);}
 .tf-drop-t{font-size:17px;}
 .tf-drop small{color:var(--gray-3);}
 .tf-cal{max-width:760px;border-radius:14px;overflow:hidden;border:1px solid color-mix(in srgb, var(--tf-primary) 30%, transparent);background:#fff;}
