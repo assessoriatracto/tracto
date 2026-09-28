@@ -15,6 +15,31 @@ const IC = {
   pin: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
   br: '<svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true"><rect width="22" height="16" rx="2.5" fill="#009B3A"/><path d="M11 2.2 19.6 8 11 13.8 2.4 8z" fill="#FEDF00"/><circle cx="11" cy="8" r="3.2" fill="#002776"/></svg>'
 };
+// ícones que o construtor oferece pros botões (chave salva no formulário)
+const bi = (d, fill) => `<svg viewBox="0 0 24 24" fill="${fill ? 'currentColor' : 'none'}" stroke="${fill ? 'none' : 'currentColor'}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+export const BTN_ICONS = {
+  arrow: ['Seta', bi('<path d="M5 12h14M13 6l6 6-6 6"/>')],
+  whatsapp: ['WhatsApp', bi('<path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.2-.2-.5-.3z"/>', true)],
+  send: ['Enviar', bi('<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>')],
+  calendar: ['Agenda', bi('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>')],
+  phone: ['Telefone', bi('<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>')],
+  mail: ['E-mail', bi('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>')],
+  check: ['Confirmar', bi('<path d="M20 6 9 17l-5-5"/>')],
+  play: ['Play', bi('<path d="M7 4v16l13-8z"/>', true)],
+  download: ['Baixar', bi('<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>')],
+  link: ['Link', bi('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>')],
+  instagram: ['Instagram', bi('<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>')],
+  star: ['Estrela', bi('<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>')]
+};
+// ícone escolhido (ou automático: WhatsApp pra links do WhatsApp, seta nos demais). "none" = sem ícone.
+export function btnIcon(key, href = '') {
+  const k = key || (/wa\.me|whatsapp/i.test(href) ? 'whatsapp' : 'arrow');
+  if (k === 'none' || !BTN_ICONS[k]) return { before: '', after: '' };
+  const html = `<span class="tf-btn-ic tf-btn-ic-${k}" aria-hidden="true">${BTN_ICONS[k][1]}</span>`;
+  return k === 'arrow' ? { before: '', after: html } : { before: html, after: '' };
+}
+const btnLabel = (label, key, href) => { const i = btnIcon(key, href); return `${i.before}<span>${label}</span>${i.after}`; };
+
 const MSG = {
   required: 'Essa resposta é obrigatória',
   email: 'Hmm, esse e-mail não parece válido',
@@ -139,9 +164,9 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
       <h1 class="tf-title tf-a">${recall(f.title)}${numbered && f.required ? '<span class="tf-req" aria-label="obrigatória"> *</span>' : ''}</h1>
       ${f.desc ? `<p class="tf-desc tf-a">${recall(f.desc).replace(/\n/g, '<br>')}</p>` : ''}`;
   }
-  const okBtn = (label = 'Avançar', hint = true) => `
+  const okBtn = (label = 'Avançar', hint = true, icon = null) => `
     <div class="tf-actions tf-a">
-      <button type="button" class="tf-btn tf-ok">${label}</button>
+      <button type="button" class="tf-btn tf-ok">${icon ? btnLabel(label, icon) : label}</button>
       ${hint ? '<span class="tf-hint">pressione <kbd>Enter ↵</kbd></span>' : ''}
     </div>`;
   const errBox = '<div class="tf-error" role="alert"></div>';
@@ -150,19 +175,19 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     const v = answers[f.id];
     switch (f.type) {
       case 'welcome':
-        return `<div class="tf-actions tf-a"><button type="button" class="tf-btn tf-btn-lg tf-ok">${esc(f.button || 'Começar')} <span class="tf-btn-ic" aria-hidden="true">${ICON.arrow}</span></button><span class="tf-hint">pressione <kbd>Enter ↵</kbd></span></div>
+        return `<div class="tf-actions tf-a"><button type="button" class="tf-btn tf-btn-lg tf-ok">${btnLabel(esc(f.button || 'Começar'), f.icon)}</button><span class="tf-hint">pressione <kbd>Enter ↵</kbd></span></div>
           ${settings.privacy !== false ? `<p class="tf-privacy tf-a">Ao continuar, você concorda com a <a href="${esc(settings.privacyUrl || '/privacidade/')}" target="_blank" rel="noopener">Política de Privacidade</a>. Seus dados ficam protegidos conforme a LGPD.</p>` : ''}`;
       case 'statement':
-        return okBtn(esc(f.button || 'Continuar'));
+        return okBtn(esc(f.button || 'Continuar'), true, f.icon || 'none');
       case 'testimonial': {
         const stars = f.rating ? `<div class="tf-stars tf-a" aria-label="${f.rating} de 5">${[1, 2, 3, 4, 5].map((n) => IC.star(n <= f.rating)).join('')}</div>` : '';
         return `${f.title ? `<p class="tf-kicker tf-a">${recall(f.title)}</p>` : ''}${stars}
           <blockquote class="tf-quote tf-a">“${recall(f.quote || '')}”</blockquote>
           <div class="tf-author tf-a">${f.photo ? `<img src="${esc(f.photo)}" alt="">` : `<span class="tf-author-av">${esc((f.author || '?').slice(0, 1))}</span>`}<div><b>${esc(f.author || '')}</b>${f.role ? `<span>${esc(f.role)}</span>` : ''}</div></div>
-          ${okBtn(esc(f.button || 'Continuar'))}`;
+          ${okBtn(esc(f.button || 'Continuar'), true, f.icon || 'none')}`;
       }
       case 'thankyou':
-        return `<div class="tf-thanks-icon tf-a">${ICON.check}</div>${f.cta ? `<div class="tf-actions tf-a"><a class="tf-btn tf-btn-lg" href="${esc(f.cta.href)}" target="_blank" rel="noopener">${esc(f.cta.label)} <span class="tf-btn-ic" aria-hidden="true">${ICON.arrow}</span></a></div>` : ''}
+        return `<div class="tf-thanks-icon tf-a">${ICON.check}</div>${f.cta ? `<div class="tf-actions tf-a"><a class="tf-btn tf-btn-lg" href="${esc(f.cta.href)}" target="_blank" rel="noopener">${btnLabel(esc(f.cta.label), f.cta.icon, f.cta.href)}</a></div>` : ''}
           ${f.redirect?.url ? `<p class="tf-redirect tf-a" data-redirect>Redirecionando em <b>${f.redirect.delay ?? 5}</b> s…</p>` : ''}`;
       case 'cep': {
         const info = answers.__cep?.[f.id];
