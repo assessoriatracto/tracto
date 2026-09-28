@@ -15,6 +15,12 @@ export const PIXEL_EVENTS_RECOMMENDED = { page_view: true, view_content: true, f
 // ============================================================
 // SUPABASE
 // ============================================================
+// grava: com id atualiza só os campos enviados; sem id cria (upsert exigiria todos os campos obrigatórios)
+const saveRow = async (table, row) => {
+  const { id, ...rest } = row;
+  if (id) return must(await sb.from(table).update(rest).eq('id', id).select().single());
+  return must(await sb.from(table).insert(rest).select().single());
+};
 const live = {
   // ---------- formulário (visitante) ----------
   async submitLead(p) { return must(await sb.rpc('submit_lead', { p })); },
@@ -52,13 +58,13 @@ const live = {
 
   // ---------- pipeline e equipe ----------
   async listStages() { return must(await sb.from('stages').select('*').order('position')); },
-  async saveStage(s) { return must(await sb.from('stages').upsert(s).select().single()); },
+  async saveStage(s) { return saveRow('stages', s); },
   async deleteStage(id, moveTo) {
     if (moveTo) must(await sb.from('leads').update({ stage_id: moveTo }).eq('stage_id', id));
     return must(await sb.from('stages').delete().eq('id', id));
   },
   async listLabels() { return must(await sb.from('labels').select('*').order('name')); },
-  async saveLabel(l) { return must(await sb.from('labels').upsert(l).select().single()); },
+  async saveLabel(l) { return saveRow('labels', l); },
   async deleteLabel(id) { return must(await sb.from('labels').delete().eq('id', id)); },
   async listProfiles() { return must(await sb.from('profiles').select('*').order('nome')); },
   async updateProfile(id, patch) { return must(await sb.from('profiles').update(patch).eq('id', id)); },
@@ -85,7 +91,7 @@ const live = {
   async getTracking() { return must(await sb.from('tracking_settings').select('*').eq('id', 1).maybeSingle()); },
   async saveTracking(patch) { return must(await sb.from('tracking_settings').update({ ...patch, updated_at: now() }).eq('id', 1).select().single()); },
   async listPixels() { return must(await sb.from('tracking_pixels').select('*').order('created_at')); },
-  async savePixel(p) { return must(await sb.from('tracking_pixels').upsert(p).select().single()); },
+  async savePixel(p) { return saveRow('tracking_pixels', p); },
   async deletePixel(id) { return must(await sb.from('tracking_pixels').delete().eq('id', id)); },
   async testPixel(id) { return must(await sb.rpc('tracking_test', { p_pixel: id })); },
   async listTrackingEvents({ limit = 100, leadId } = {}) {
@@ -99,7 +105,7 @@ const live = {
   async createApiKey(name) { return must(await sb.rpc('create_api_key', { p_name: name })); },
   async revokeApiKey(id) { return must(await sb.from('api_keys').update({ revoked: true }).eq('id', id)); },
   async listWebhooks() { return must(await sb.from('webhooks').select('*').order('created_at')); },
-  async saveWebhook(w) { return must(await sb.from('webhooks').upsert(w).select().single()); },
+  async saveWebhook(w) { return saveRow('webhooks', w); },
   async deleteWebhook(id) { return must(await sb.from('webhooks').delete().eq('id', id)); },
   async testWebhook(id) { return must(await sb.rpc('webhook_test', { p_id: id })); },
   async listDeliveries(limit = 60) { return must(await sb.from('webhook_deliveries').select('id,created_at,webhook_id,event,lead_id,status_code,response,payload').order('id', { ascending: false }).limit(limit)); },
@@ -133,7 +139,7 @@ const live = {
 
   // ---------- times ----------
   async listTeams() { return must(await sb.from('teams').select('*').order('name')); },
-  async saveTeam(t) { return must(await sb.from('teams').upsert(t).select().single()); },
+  async saveTeam(t) { return saveRow('teams', t); },
   async deleteTeam(id) { return must(await sb.from('teams').delete().eq('id', id)); },
 
   // ---------- formulários (construtor) ----------
@@ -156,7 +162,7 @@ const live = {
 
   // ---------- financeiro ----------
   async listAdAccounts() { return must(await sb.from('ad_accounts').select('id,created_at,platform,account_id,name,enabled,last_sync_at,last_error,connected_via,token_expires_at,fb_user_name,currency').order('created_at')); },
-  async saveAdAccount(a) { return must(await sb.from('ad_accounts').upsert(a).select().single()); },
+  async saveAdAccount(a) { return saveRow('ad_accounts', a); },
   async deleteAdAccount(id) { return must(await sb.from('ad_accounts').delete().eq('id', id)); },
   async syncAds(accountId = null, days = 30) { return must(await sb.rpc('ads_sync', { p_account: accountId, p_days: days })); },
   // importação de leads (planilhas e formulários da Meta)
@@ -173,7 +179,7 @@ const live = {
     }
   },
   async listFinance(from, to) { return must(await sb.from('finance_entries').select('*').gte('date', from).lte('date', to).order('date', { ascending: false })); },
-  async saveFinance(e) { return must(await sb.from('finance_entries').upsert(e).select().single()); },
+  async saveFinance(e) { return saveRow('finance_entries', e); },
   async deleteFinance(id) { return must(await sb.from('finance_entries').delete().eq('id', id)); },
 
   // ---------- Facebook (login nativo) ----------
