@@ -1,3 +1,14 @@
+// ===== Botões "Quero aplicar": leva UTMs e ids de clique da LP pro formulário =====
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (![...q.keys()].length) return;
+  document.querySelectorAll("a[data-apply]").forEach((a) => {
+    const u = new URL(a.getAttribute("href"), location.origin);
+    q.forEach((v, k) => { if (!u.searchParams.has(k)) u.searchParams.set(k, v); });
+    a.setAttribute("href", u.pathname + u.search);
+  });
+})();
+
 // ===== Client logos marquee =====
 const clientLogoTrack = document.getElementById("clientLogoTrack");
 if (clientLogoTrack) {

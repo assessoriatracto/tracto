@@ -49,7 +49,7 @@ export const FORMS = {
     fields: [
       {
         id: 'welcome', type: 'welcome', title: WELCOME_TITLE,
-        desc: 'Esse formulário nos ajuda a entender o cenário do seu negócio, pra que possamos lhe apresentar um plano realista e eficiente de crescimento com tráfego pago. Leva menos de 2 minutos.\n\n→︎ Exclusivo para empresas que já investem (ou estão dispostas a investir) no mínimo R$800,00/mês nos anúncios',
+        desc: 'Esse formulário nos ajuda a entender o cenário do seu negócio, pra que possamos lhe apresentar um plano realista e eficiente de crescimento com tráfego pago. Leva menos de 2 minutos.\n\nExclusivo para empresas que já investem (ou estão dispostas a investir) no mínimo R$800,00/mês nos anúncios',
         button: 'QUERO ESCALAR AS MINHAS VENDAS'
       },
       ...base(EXP_TRAFEGO)
@@ -64,7 +64,7 @@ export const FORMS = {
     fields: [
       {
         id: 'welcome', type: 'welcome', title: WELCOME_TITLE,
-        desc: 'Esse formulário nos ajuda a entender o cenário do seu negócio, pra que possamos lhe apresentar um plano realista e eficiente de crescimento com Marketplace. Leva menos de 2 minutos.\n\n→︎ Exclusivo para empresas que já investem (ou estão dispostas a investir) em vendas no Mercado Livre e Shopee.',
+        desc: 'Esse formulário nos ajuda a entender o cenário do seu negócio, pra que possamos lhe apresentar um plano realista e eficiente de crescimento com Marketplace. Leva menos de 2 minutos.\n\nExclusivo para empresas que já investem (ou estão dispostas a investir) em vendas no Mercado Livre e Shopee.',
         button: 'QUERO ESCALAR AS MINHAS VENDAS'
       },
       ...base({ title: 'Já trabalhou com marketplace?', options: ['Sim, eu mesmo faço', 'Sim, contratei um pessoal/time', 'Nunca trabalhei'] })
@@ -79,7 +79,7 @@ export const FORMS = {
     fields: [
       {
         id: 'welcome', type: 'welcome', title: WELCOME_TITLE,
-        desc: 'Esse formulário nos ajuda a entender o cenário do seu negócio, pra que possamos lhe apresentar um plano realista e eficiente de crescimento com <strong>Tráfego Pago e Marketplace.</strong> Leva menos de 2 minutos.\n\n→︎ Exclusivo para empresas que já investem (ou estão dispostas a investir) no mínimo R$800,00/mês nos anúncios.',
+        desc: 'Esse formulário nos ajuda a entender o cenário do seu negócio, pra que possamos lhe apresentar um plano realista e eficiente de crescimento com <strong>Tráfego Pago e Marketplace.</strong> Leva menos de 2 minutos.\n\nExclusivo para empresas que já investem (ou estão dispostas a investir) no mínimo R$800,00/mês nos anúncios.',
         button: 'QUERO ESCALAR AS MINHAS VENDAS'
       },
       { id: 'servico', type: 'choice', title: 'Quais desses serviços abaixo você tem interesse?', options: ['Tráfego Pago', 'Marketplace', 'Ambos'], required: false },

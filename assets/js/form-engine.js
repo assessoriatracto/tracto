@@ -150,7 +150,7 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
     const v = answers[f.id];
     switch (f.type) {
       case 'welcome':
-        return `<div class="tf-actions tf-a"><button type="button" class="tf-btn tf-btn-lg tf-ok">${esc(f.button || 'Começar')} <span aria-hidden="true">→</span></button><span class="tf-hint">pressione <kbd>Enter ↵</kbd></span></div>
+        return `<div class="tf-actions tf-a"><button type="button" class="tf-btn tf-btn-lg tf-ok">${esc(f.button || 'Começar')} <span class="tf-btn-ic" aria-hidden="true">${ICON.arrow}</span></button><span class="tf-hint">pressione <kbd>Enter ↵</kbd></span></div>
           ${settings.privacy !== false ? `<p class="tf-privacy tf-a">Ao continuar, você concorda com a <a href="${esc(settings.privacyUrl || '/privacidade/')}" target="_blank" rel="noopener">Política de Privacidade</a>. Seus dados ficam protegidos conforme a LGPD.</p>` : ''}`;
       case 'statement':
         return okBtn(esc(f.button || 'Continuar'));
@@ -162,7 +162,7 @@ export function mountForm(root, form, { submit, track, onDone, onProgress, initi
           ${okBtn(esc(f.button || 'Continuar'))}`;
       }
       case 'thankyou':
-        return `<div class="tf-thanks-icon tf-a">${ICON.check}</div>${f.cta ? `<div class="tf-actions tf-a"><a class="tf-btn tf-btn-lg" href="${esc(f.cta.href)}" target="_blank" rel="noopener">${esc(f.cta.label)} <span aria-hidden="true">→</span></a></div>` : ''}
+        return `<div class="tf-thanks-icon tf-a">${ICON.check}</div>${f.cta ? `<div class="tf-actions tf-a"><a class="tf-btn tf-btn-lg" href="${esc(f.cta.href)}" target="_blank" rel="noopener">${esc(f.cta.label)} <span class="tf-btn-ic" aria-hidden="true">${ICON.arrow}</span></a></div>` : ''}
           ${f.redirect?.url ? `<p class="tf-redirect tf-a" data-redirect>Redirecionando em <b>${f.redirect.delay ?? 5}</b> s…</p>` : ''}`;
       case 'cep': {
         const info = answers.__cep?.[f.id];

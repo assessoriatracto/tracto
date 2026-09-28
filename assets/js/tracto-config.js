@@ -4,6 +4,7 @@
 window.TRACTO_CONFIG = {
   supabaseUrl: 'https://xbmiqampdueyhnysbkpn.supabase.co',
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibWlxYW1wZHVleWhueXNia3BuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA0NDQyMjQsImV4cCI6MjEwNjAyMDIyNH0.dQR4aHupdfZ0YDQRjLuFg4_oc2UzabWshVWVvd3CbYE',
+  metaAppId: '', // app da Meta (login do Facebook no Financeiro do CRM)
   whatsapp: '5562994759475',
   siteUrl: 'https://assessoriatracto.com.br' // onde ficam os formulários (/aplicar/...)
 };
