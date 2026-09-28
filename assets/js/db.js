@@ -234,7 +234,7 @@ const STAGE_DEFAULTS = {
 function demoStages() {
   let s = read(K.stages, null);
   if (!s) {
-    s = [['Em análise', '#6AA8FF', 'open'], ['Contato realizado', '#B58CFF', 'open'], ['Ligação', '#4FD1C5', 'open'], ['Qualificado', '#FFAD00', 'open'],
+    s = [['Novos leads', '#6AA8FF', 'open'], ['Contato realizado', '#B58CFF', 'open'], ['Ligação', '#4FD1C5', 'open'], ['Qualificado', '#FFAD00', 'open'],
       ['Reunião agendada', '#FF8A3D', 'open'], ['Venda realizada', '#3DDC84', 'won'], ['Perdido', '#6B6B6B', 'lost']]
       .map(([name, color, kind], position) => ({ id: uid(), name, color, kind, position }));
   }
