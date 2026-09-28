@@ -7,7 +7,7 @@
 const FALLBACK = { pixels: [
   { platform: 'meta', id: '1357841419671798', events: { page_view: true, view_content: true, form_start: true, form_step: false, lead: true } },
   { platform: 'meta', id: '2142406153298000', events: { page_view: true, view_content: true, form_start: true, form_step: false, lead: true } }
-], currency: 'BRL', lead_values: {} };
+], currency: 'BRL' };
 
 const on = (px, key) => px.events?.[key] !== false && (key !== 'form_step' || px.events?.form_step === true);
 
@@ -118,16 +118,15 @@ export function createTracker({ form, visitorId, loadConfig, extraGtm = [] }) {
         }
       });
     },
-    // CONVERSÃO: formulário concluído. eventId = mesmo ID que o servidor manda pela Conversions API
+    // CONVERSÃO: formulário concluído. eventId = mesmo ID que o servidor manda pela Conversions API.
+    // Lead não leva valor: só a venda confirmada no CRM envia valor (pelo servidor).
     lead({ eventId, faturamento }) {
       run(() => {
-        const value = cfg.lead_values?.[faturamento];
-        const money = value != null ? { value, currency: cfg.currency || 'BRL' } : { currency: cfg.currency || 'BRL' };
-        metaEvent('lead', 'Lead', { content_name: form.name, content_category: 'lead', ...money }, { eventID: eventId });
-        gaEvent('lead', 'generate_lead', { form_name: form.name, transaction_id: eventId, ...money });
+        metaEvent('lead', 'Lead', { content_name: form.name, content_category: 'lead' }, { eventID: eventId });
+        gaEvent('lead', 'generate_lead', { form_name: form.name, transaction_id: eventId });
         ads().filter((p) => on(p, 'lead') && p.label).forEach((p) =>
-          window.gtag('event', 'conversion', { send_to: `${p.id}/${p.label}`, transaction_id: eventId, ...money }));
-        dl('tracto_lead', { lead_event_id: eventId, faturamento, ...money,
+          window.gtag('event', 'conversion', { send_to: `${p.id}/${p.label}`, transaction_id: eventId }));
+        dl('tracto_lead', { lead_event_id: eventId, faturamento,
           user_data: { email: userData.em, phone_number: userData.ph ? '+' + userData.ph : undefined, address: { first_name: userData.fn, last_name: userData.ln, region: userData.st, country: 'BR' } } });
       });
     }
