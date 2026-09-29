@@ -10,7 +10,7 @@
 <link rel="icon" type="image/svg+xml" href="/assets/img/favicon.svg">
 <link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
 <link rel="stylesheet" href="/assets/css/app.css?v=3">
-<link rel="stylesheet" href="/aplicar/form.css?v=10">
+<link rel="stylesheet" href="/aplicar/form.css?v=11">
 
 <!-- Pixels (Meta e Google) são carregados pelo /assets/js/tracking.js a partir da configuração do CRM -->
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1357841419671798&ev=PageView&noscript=1"/><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=2142406153298000&ev=PageView&noscript=1"/></noscript>
@@ -21,12 +21,12 @@
 <main class="tf-root" id="form"></main>
 <div class="tf-brandmark">Tracto <b>Assessoria de Marketing</b></div>
 
-<script src="/assets/js/tracto-config.js?v=10"></script>
+<script src="/assets/js/tracto-config.js?v=11"></script>
 <script type="module">
-import { DB } from '/assets/js/db.js?v=10';
-import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=10';
-import { mountForm } from '/assets/js/form-engine.js?v=10';
-import { createTracker } from '/assets/js/tracking.js?v=10';
+import { DB } from '/assets/js/db.js?v=11';
+import { FORMS, DEFAULT_FORM, formBySlug } from '/assets/js/forms.js?v=11';
+import { mountForm } from '/assets/js/form-engine.js?v=11';
+import { createTracker } from '/assets/js/tracking.js?v=11';
 
 // tema: cores, logo, marca e timer definidos no construtor
 function applyTheme(settings, { timer = true } = {}) {
@@ -51,7 +51,7 @@ function applyTheme(settings, { timer = true } = {}) {
     document.body.appendChild(el);
     const tick = () => {
       const left = Math.max(0, settings.timer.minutes * 60 - Math.floor((Date.now() - start) / 1000));
-      el.innerHTML = `⏱ ${settings.timer.label ? String(settings.timer.label).replace(/[<>]/g, '') + ' ' : ''}<b>${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}</b>`;
+      el.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:4px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M9 2h6"/></svg>${settings.timer.label ? String(settings.timer.label).replace(/[<>]/g, '') + ' ' : ''}<b>${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}</b>`;
       el.classList.toggle('is-over', !left);
       if (!left || !el.isConnected) clearInterval(iv);
     };
@@ -107,7 +107,9 @@ const context = () => ({
   referrer: document.referrer || null, user_agent: navigator.userAgent.slice(0, 300), event_source_url: location.href
 });
 
-const tracker = createTracker({ form, visitorId, loadConfig: () => DB.publicTracking(), extraGtm: settings.gtm ? [settings.gtm] : [] });
+// pixels ligados por padrão; o formulário pode desligar em Configurações > Rastreamento
+const pixelsOn = settings.pixels !== false;
+const tracker = createTracker({ form, visitorId, loadConfig: async () => (pixelsOn ? DB.publicTracking() : { pixels: [], currency: 'BRL' }), extraGtm: pixelsOn && settings.gtm ? [settings.gtm] : [] });
 tracker.pageView();
 tracker.viewContent();
 

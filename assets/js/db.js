@@ -168,6 +168,7 @@ const live = {
   // importação de leads (planilhas e formulários da Meta)
   async importLeads(rows, origin, formName) { return must(await sb.rpc('import_leads', { p_rows: rows, p_origin: origin, p_form_name: formName })); },
   async metaLeadsStatus() { return must(await sb.rpc('meta_leads_status')); },
+  async junkSweep() { return must(await sb.rpc('junk_sweep')); },
   async metaLeadsSync() { return must(await sb.rpc('meta_leads_sync')); },
   async metaLeadsProcess() { return must(await sb.rpc('meta_leads_process')); },
   async processAds() { try { return must(await sb.rpc('ads_sync_process')); } catch (e) { return 0; } },
@@ -542,6 +543,7 @@ const demo = {
     write(K.leads, all); return { importados: ok, ignorados: skip };
   },
   async metaLeadsStatus() { return { pages: 0, forms: [], total_leads: 0, imported: 0, pending: 0 }; },
+  async junkSweep() { return 0; },
   async metaLeadsSync() { return 0; },
   async metaLeadsProcess() { return 0; },
   async processAds() { return 0; },
