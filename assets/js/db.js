@@ -188,6 +188,11 @@ const live = {
   async listFinance(from, to) { return must(await sb.from('finance_entries').select('*').gte('date', from).lte('date', to).order('date', { ascending: false })); },
   async saveFinance(e) { return saveRow('finance_entries', e); },
   async deleteFinance(id) { return must(await sb.from('finance_entries').delete().eq('id', id)); },
+  // despesas fixas (viram lançamento todo mês)
+  async listRecurring() { return must(await sb.from('finance_recurring').select('*').order('name')); },
+  async saveRecurring(r) { return saveRow('finance_recurring', r); },
+  async deleteRecurring(id) { return must(await sb.from('finance_recurring').delete().eq('id', id)); },
+  async runRecurring() { try { return must(await sb.rpc('finance_recurring_run')); } catch (e) { return 0; } },
 
   // ---------- Facebook (login nativo) ----------
   async getAppSettings() { return must(await sb.from('app_settings').select('meta_app_id').eq('id', 1).maybeSingle()); },
@@ -569,6 +574,26 @@ const demo = {
   async listFinance(from, to) { return read(K.fin).filter((e) => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date)); },
   async saveFinance(e) { const all = read(K.fin); const i = all.findIndex((x) => x.id === e.id); const row = i >= 0 ? { ...all[i], ...e } : { id: uid(), created_at: now(), category: 'Outros', ...e }; if (i >= 0) all[i] = row; else all.push(row); write(K.fin, all); return row; },
   async deleteFinance(id) { write(K.fin, read(K.fin).filter((e) => e.id !== id)); },
+  async listRecurring() { return read('tracto_v4_recurring', []).sort((a, b) => a.name.localeCompare(b.name)); },
+  async saveRecurring(r) { const all = read('tracto_v4_recurring', []); const i = all.findIndex((x) => x.id === r.id); const row = i >= 0 ? { ...all[i], ...r } : { id: uid(), created_at: now(), active: true, due_day: 1, category: 'Ferramentas', start_date: new Date().toISOString().slice(0, 10), generated_until: null, ...r }; if (i >= 0) all[i] = row; else all.push(row); write('tracto_v4_recurring', all); return row; },
+  async deleteRecurring(id) { write('tracto_v4_recurring', read('tracto_v4_recurring', []).filter((x) => x.id !== id)); },
+  async runRecurring() {
+    const all = read('tracto_v4_recurring', []); const fin = read(K.fin); let n = 0;
+    const ym = (d) => d.slice(0, 7); const cur = new Date().toISOString().slice(0, 7);
+    const next = (m) => { const [y, mo] = m.split('-').map(Number); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };
+    all.filter((r) => r.active).forEach((r) => {
+      let m = ym(r.start_date); if (r.generated_until && next(ym(r.generated_until)) > m) m = next(ym(r.generated_until));
+      for (; m <= cur && (!r.end_date || m <= ym(r.end_date)); m = next(m)) {
+        const [y, mo] = m.split('-').map(Number); const last = new Date(y, mo, 0).getDate();
+        let d = `${m}-${String(Math.min(r.due_day, last)).padStart(2, '0')}`; if (d < r.start_date) d = r.start_date;
+        if (r.end_date && d > r.end_date) continue;
+        if (fin.some((e) => e.recurring_id === r.id && ym(e.date) === m)) continue;
+        fin.push({ id: uid(), created_at: now(), kind: 'despesa', category: r.category, description: r.name, amount: r.amount, date: d, recurring_id: r.id, expense_type: 'fixa' }); n++;
+      }
+      const end = r.end_date && ym(r.end_date) < cur ? ym(r.end_date) : cur; r.generated_until = end + '-01';
+    });
+    write(K.fin, fin); write('tracto_v4_recurring', all); return n;
+  },
 
   // ---------- Facebook (só funciona conectado ao Supabase) ----------
   async getAppSettings() { return read('tracto_v4_app', {}); },
