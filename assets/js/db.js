@@ -224,6 +224,30 @@ const K = {
   audit: 'tracto_v4_audit', me: 'tracto_v4_me'
 };
 const read = (k, d = []) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } };
+// venda única (igual ao banco): venda do lead <-> lançamento de venda no financeiro
+const demoIsSale = (e) => e && e.kind === 'receita' && ['Venda (contrato)', 'Contrato'].includes(e.category);
+const spDate = (t) => new Date(new Date(t).getTime() - 3 * 3600000).toISOString().slice(0, 10);
+async function demoSaveFinance(e) { const all = read(K.fin); const i = all.findIndex((x) => x.id === e.id); const row = i >= 0 ? { ...all[i], ...e } : { id: crypto.randomUUID(), created_at: new Date().toISOString(), category: 'Outros', ...e }; if (i >= 0) all[i] = row; else all.push(row); write(K.fin, all); return row; }
+function demoLeadToEntry(l) {
+  const all = read(K.fin); const i = all.findIndex((e) => e.lead_id === l.id && demoIsSale(e));
+  if (!l.won_at || !(Number(l.valor) > 0)) { if (i >= 0 && all[i].from_pipeline) { all.splice(i, 1); write(K.fin, all); } return; }
+  const months = l.plan === 'unico' ? 1 : Number(l.contract_months || 12);
+  const v = { description: l.nome, date: spDate(l.won_at), amount: Number(l.contract_value) || Number(l.valor) * months, monthly_amount: Number(l.valor), months, service: l.service || null, plan: l.plan || null, canceled_at: l.canceled_at || null, cancel_reason: l.cancel_reason || null };
+  if (i >= 0) all[i] = { ...all[i], ...v };
+  else all.push({ id: crypto.randomUUID(), created_at: new Date().toISOString(), kind: 'receita', category: 'Venda (contrato)', lead_id: l.id, from_pipeline: true, meta_sent_at: new Date().toISOString(), source: ['organico', 'manual'].includes(l.source) ? 'organico' : null, ...v });
+  write(K.fin, all);
+}
+function demoEntryToLead(e) {
+  const wonId = demoStages().filter((s) => s.kind === 'won').sort((a, b) => a.position - b.position)[0]?.id;
+  write(K.leads, read(K.leads).map((l) => {
+    if (l.id !== e.lead_id) return l;
+    const isWon = demoStages().some((s) => s.id === l.stage_id && s.kind === 'won');
+    return { ...l, valor: Math.round((e.plan === 'unico' ? e.amount : e.monthly_amount || e.amount / (e.months || 1)) * 100) / 100,
+      contract_value: ['semestral', 'anual', 'unico'].includes(e.plan) ? e.amount : null, contract_months: e.months, plan: e.plan, service: e.service,
+      canceled_at: e.canceled_at || null, won_at: l.won_at && spDate(l.won_at) === e.date ? l.won_at : new Date(e.date + 'T12:00').toISOString(),
+      stage_id: isWon ? l.stage_id : wonId || l.stage_id };
+  }));
+}
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 const DEMO_ME = { id: 'demo-user', nome: 'Você (demo)', email: 'demo@tracto', ativo: true, role: 'admin', team_id: null, pushcut_url: null, phone: null };
 const DEMO_TEAM = [DEMO_ME, { id: 'demo-isaque', nome: 'Isaque', email: 'isaque@tracto', ativo: true, role: 'sdr', team_id: null }, { id: 'demo-luiz', nome: 'Luiz', email: 'luiz@tracto', ativo: true, role: 'gestor', team_id: null }];
@@ -431,7 +455,7 @@ const demo = {
       const nl = { ...l, ...patch, updated_at: now(), last_activity_at: now() };
       if ('stage_id' in patch && patch.stage_id !== l.stage_id) {
         const st = stages.find((s) => s.id === patch.stage_id);
-        nl.won_at = st?.kind === 'won' ? (l.won_at || now()) : null;
+        nl.won_at = st?.kind === 'won' ? ('won_at' in patch && patch.won_at ? patch.won_at : l.won_at || now()) : null;
         log(l.id, 'stage', `Estágio: ${stages.find((s) => s.id === l.stage_id)?.name || 'sem estágio'} → ${st?.name || 'sem estágio'}`);
         demoHook('lead.stage_changed', nl);
         if (st?.kind === 'won') demoHook('lead.won', nl);
@@ -443,6 +467,7 @@ const demo = {
       return nl;
     });
     write(K.leads, leads);
+    leads.filter((l) => ids.includes(l.id)).forEach(demoLeadToEntry);
   },
   async deleteLeads(ids) {
     write(K.leads, read(K.leads).filter((l) => !ids.includes(l.id)));
@@ -572,8 +597,8 @@ const demo = {
   async processAds() { return 0; },
   async listInsights(from, to) { return read(K.ins).filter((r) => r.date >= from && r.date <= to); },
   async listFinance(from, to) { return read(K.fin).filter((e) => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date)); },
-  async saveFinance(e) { const all = read(K.fin); const i = all.findIndex((x) => x.id === e.id); const row = i >= 0 ? { ...all[i], ...e } : { id: uid(), created_at: now(), category: 'Outros', ...e }; if (i >= 0) all[i] = row; else all.push(row); write(K.fin, all); return row; },
-  async deleteFinance(id) { write(K.fin, read(K.fin).filter((e) => e.id !== id)); },
+  async saveFinance(e) { const r = await demoSaveFinance(e); if (demoIsSale(r) && r.lead_id) demoEntryToLead(r); return r; },
+  async deleteFinance(id) { const e = read(K.fin).find((x) => x.id === id); write(K.fin, read(K.fin).filter((x) => x.id !== id)); if (e && demoIsSale(e) && e.lead_id) write(K.leads, read(K.leads).map((l) => (l.id === e.lead_id ? { ...l, valor: null, contract_value: null } : l))); },
   async listRecurring() { return read('tracto_v4_recurring', []).sort((a, b) => a.name.localeCompare(b.name)); },
   async saveRecurring(r) { const all = read('tracto_v4_recurring', []); const i = all.findIndex((x) => x.id === r.id); const row = i >= 0 ? { ...all[i], ...r } : { id: uid(), created_at: now(), active: true, due_day: 1, category: 'Ferramentas', start_date: new Date().toISOString().slice(0, 10), generated_until: null, ...r }; if (i >= 0) all[i] = row; else all.push(row); write('tracto_v4_recurring', all); return row; },
   async deleteRecurring(id) { write('tracto_v4_recurring', read('tracto_v4_recurring', []).filter((x) => x.id !== id)); },
