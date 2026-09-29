@@ -171,6 +171,12 @@ const live = {
   async junkSweep() { return must(await sb.rpc('junk_sweep')); },
   async metaLeadsSync() { return must(await sb.rpc('meta_leads_sync')); },
   async metaLeadsProcess() { return must(await sb.rpc('meta_leads_process')); },
+  // campanhas, conjuntos e anúncios da Meta (status e orçamento) e alterações
+  async listMetaObjects() { return must(await sb.from('meta_objects').select('id, level, name, status, effective_status, daily_budget, lifetime_budget, campaign_id, adset_id')); },
+  async metaObjectsSync() { return must(await sb.rpc('meta_objects_sync')); },
+  async metaObjectsProcess() { return must(await sb.rpc('meta_objects_process')); },
+  async metaObjectUpdate(id, patch) { return must(await sb.rpc('meta_object_update', { p_id: id, p_patch: patch })); },
+  async metaObjectJob(id) { return must(await sb.rpc('meta_object_job', { p_id: id })); },
   async processAds() { try { return must(await sb.rpc('ads_sync_process')); } catch (e) { return 0; } },
   async listInsights(from, to) {
     const out = []; let i = 0;
@@ -546,6 +552,18 @@ const demo = {
   async junkSweep() { return 0; },
   async metaLeadsSync() { return 0; },
   async metaLeadsProcess() { return 0; },
+  async listMetaObjects() { return read('tracto_v4_meta_objects', null) || [...new Map(read(K.ins).flatMap((x) => [[x.campaign_id, { id: x.campaign_id, level: 'campaign', name: x.campaign_name, status: 'ACTIVE', effective_status: 'ACTIVE', daily_budget: 5000 }], [x.adset_id, { id: x.adset_id, level: 'adset', name: x.adset_name, status: 'ACTIVE', effective_status: 'ACTIVE', campaign_id: x.campaign_id }], [x.ad_id, { id: x.ad_id, level: 'ad', name: x.ad_name, status: 'ACTIVE', effective_status: 'ACTIVE' }]]).filter(([k]) => k)).values()]; },
+  async metaObjectsSync() { return 0; },
+  async metaObjectsProcess() { return 0; },
+  async metaObjectUpdate(id, patch) {
+    const all = await this.listMetaObjects(); const o = all.find((x) => x.id === id); if (!o) throw new Error('não encontrado');
+    if (patch.status) { o.status = patch.status; o.effective_status = patch.status; }
+    if (patch.name) o.name = patch.name;
+    if (patch.daily_budget) { o.daily_budget = patch.daily_budget * 100; o.lifetime_budget = null; }
+    if (patch.lifetime_budget) { o.lifetime_budget = patch.lifetime_budget * 100; o.daily_budget = null; }
+    write('tracto_v4_meta_objects', all); return 1;
+  },
+  async metaObjectJob() { return { done: true, ok: true }; },
   async processAds() { return 0; },
   async listInsights(from, to) { return read(K.ins).filter((r) => r.date >= from && r.date <= to); },
   async listFinance(from, to) { return read(K.fin).filter((e) => e.date >= from && e.date <= to).sort((a, b) => b.date.localeCompare(a.date)); },
