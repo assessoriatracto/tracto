@@ -132,6 +132,8 @@ const live = {
     return must(await sb.auth.mfa.verify({ factorId, challengeId: ch.id, code }));
   },
   async mfaUnenroll(factorId) { return must(await sb.auth.mfa.unenroll({ factorId })); },
+  async pushcutTest() { return must(await sb.rpc('pushcut_test')); },
+  async pushcutTestStatus() { return must(await sb.rpc('pushcut_test_status')); },
   async updateMyProfile(patch) {
     const s = await this.session();
     return must(await sb.from('profiles').update(patch).eq('id', s.user.id).select().single());
@@ -443,6 +445,8 @@ const demo = {
   async mfaEnroll() { return { id: 'demo-factor', totp: { qr_code: '', secret: 'DEMO2FADEMO2FADEMO2FA', uri: 'otpauth://totp/Tracto:demo?secret=DEMO2FADEMO2FADEMO2FA' } }; },
   async mfaVerify(factorId, code) { if (!/^\d{6}$/.test(code)) throw new Error('código inválido'); write('tracto_v4_mfa', [{ id: factorId, status: 'verified', friendly_name: 'Tracto CRM (demo)' }]); },
   async mfaUnenroll() { write('tracto_v4_mfa', []); },
+  async pushcutTest() { return 1; },
+  async pushcutTestStatus() { return { done: true, ok: true, status: 200 }; },
   async updateMyProfile(patch) { const all = read(K.me, {}); all[DEMO_ME.id] = { ...(all[DEMO_ME.id] || {}), ...patch }; write(K.me, all); return demoMe(); },
 
   // ---------- leads ----------
