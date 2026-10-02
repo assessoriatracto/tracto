@@ -351,6 +351,13 @@ function demoInsertLead(fields, { silent = false } = {}) {
     assigned_to: null, valor: null, reminder_at: null, reminder_note: null, recovered_from: null, ...fields
   };
   lead.estado = lead.estado || dddUf(lead.whatsapp);
+  // serviço já na chegada (igual ao banco): resposta "qual serviço", senão o nome do formulário
+  if (!lead.service) {
+    const ans = (lead.answers || []).find((x) => /servi[cç]o/i.test(x.label || ''))?.value || '';
+    const nm = `${lead.form_name || ''} ${lead.form_id || ''}`;
+    lead.service = /ambos/i.test(ans) ? null : /marketplace/i.test(ans) ? 'marketplace' : /tr[aá]fego|marketing/i.test(ans) ? 'marketing'
+      : /marketplace|market place/i.test(nm) ? 'marketplace' : /tr[aá]fego|marketing/i.test(nm) ? 'marketing' : null;
+  }
   if (demoStages().find((s) => s.id === lead.stage_id)?.kind === 'won') lead.won_at = lead.won_at || lead.created_at;
   write(K.leads, [lead, ...read(K.leads)]);
   log(lead.id, lead.recovered_from ? 'recovered' : 'created',
