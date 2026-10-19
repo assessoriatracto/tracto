@@ -234,7 +234,7 @@ function demoLeadToEntry(l) {
   const all = read(K.fin); const i = all.findIndex((e) => e.lead_id === l.id && demoIsSale(e));
   if (!l.won_at || !(Number(l.valor) > 0)) { if (i >= 0 && all[i].from_pipeline) { all.splice(i, 1); write(K.fin, all); } return; }
   const months = l.plan === 'unico' ? 1 : Number(l.contract_months || 12);
-  const v = { description: l.nome, date: spDate(l.won_at), amount: Number(l.contract_value) || Number(l.valor) * months, monthly_amount: Number(l.valor), months, service: l.service || null, plan: l.plan || null, canceled_at: l.canceled_at || null, cancel_reason: l.cancel_reason || null };
+  const v = { description: l.nome, date: spDate(l.won_at), amount: Number(l.contract_value) || (l.first_amount != null && l.plan !== 'unico' ? Number(l.first_amount) + Number(l.valor) * (months - 1) : Number(l.valor) * months), monthly_amount: Number(l.valor), first_amount: l.first_amount ?? null, months, service: l.service || null, plan: l.plan || null, canceled_at: l.canceled_at || null, cancel_reason: l.cancel_reason || null };
   if (i >= 0) all[i] = { ...all[i], ...v };
   else all.push({ id: crypto.randomUUID(), created_at: new Date().toISOString(), kind: 'receita', category: 'Venda (contrato)', lead_id: l.id, from_pipeline: true, meta_sent_at: new Date().toISOString(), source: ['organico', 'manual'].includes(l.source) ? 'organico' : null, ...v });
   write(K.fin, all);
@@ -245,7 +245,7 @@ function demoEntryToLead(e) {
     if (l.id !== e.lead_id) return l;
     const isWon = demoStages().some((s) => s.id === l.stage_id && s.kind === 'won');
     return { ...l, valor: Math.round((e.plan === 'unico' ? e.amount : e.monthly_amount || e.amount / (e.months || 1)) * 100) / 100,
-      contract_value: ['semestral', 'anual', 'unico'].includes(e.plan) ? e.amount : null, contract_months: e.months, plan: e.plan, service: e.service,
+      contract_value: ['semestral', 'anual', 'unico'].includes(e.plan) ? e.amount : null, first_amount: e.first_amount ?? null, contract_months: e.months, plan: e.plan, service: e.service,
       canceled_at: e.canceled_at || null, won_at: l.won_at && spDate(l.won_at) === e.date ? l.won_at : new Date(e.date + 'T12:00').toISOString(),
       stage_id: isWon ? l.stage_id : wonId || l.stage_id };
   }));
