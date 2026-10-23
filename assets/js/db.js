@@ -236,7 +236,7 @@ function demoLeadToEntry(l) {
   const months = l.plan === 'unico' ? 1 : Number(l.contract_months || 12);
   const v = { description: l.nome, date: spDate(l.won_at), amount: Number(l.contract_value) || (l.first_amount != null && l.plan !== 'unico' ? Number(l.first_amount) + Number(l.valor) * (months - 1) : Number(l.valor) * months), monthly_amount: Number(l.valor), first_amount: l.first_amount ?? null, months, service: l.service || null, plan: l.plan || null, canceled_at: l.canceled_at || null, cancel_reason: l.cancel_reason || null };
   if (i >= 0) all[i] = { ...all[i], ...v };
-  else all.push({ id: crypto.randomUUID(), created_at: new Date().toISOString(), kind: 'receita', category: 'Venda (contrato)', lead_id: l.id, from_pipeline: true, meta_sent_at: new Date().toISOString(), source: ['organico', 'manual'].includes(l.source) ? 'organico' : null, ...v });
+  else all.push({ id: crypto.randomUUID(), created_at: new Date().toISOString(), kind: 'receita', category: 'Venda (contrato)', lead_id: l.id, from_pipeline: true, meta_sent_at: new Date().toISOString(), source: ['organico', 'manual'].includes(l.source) ? 'organico' : ['local', 'indicacao'].includes(l.source) ? l.source : null, ...v });
   write(K.fin, all);
 }
 function demoEntryToLead(e) {
