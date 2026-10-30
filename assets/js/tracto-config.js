@@ -7,5 +7,6 @@ window.TRACTO_CONFIG = {
   metaAppId: '1085198290966077', // app da Meta "CRM Tracto" (login do Facebook no Financeiro do CRM)
   metaLoginConfigId: '2240299353418019', // ID da configuração do Login do Facebook para Empresas (ads_read, business_management)
   whatsapp: '5562994759475',
+  waGateway: 'https://gateway-production-11ee.up.railway.app', // ponte do WhatsApp (Atendimento) no Railway
   siteUrl: 'https://assessoriatracto.com.br' // onde ficam os formulários (/aplicar/...)
 };
