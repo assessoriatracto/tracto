@@ -196,6 +196,28 @@ const live = {
   async deleteRecurring(id) { return must(await sb.from('finance_recurring').delete().eq('id', id)); },
   async runRecurring() { try { return must(await sb.rpc('finance_recurring_run')); } catch (e) { return 0; } },
 
+  // ---------- follow-up ----------
+  async listFollowupSteps() { return must(await sb.from('followup_steps').select('*').order('segment').order('position')); },
+  async saveFollowupSteps(segment, steps) {
+    must(await sb.from('followup_steps').delete().eq('segment', segment));
+    if (steps.length) must(await sb.from('followup_steps').insert(steps.map((x, i) => ({ segment, position: i, wait_days: x.wait_days, body: x.body }))));
+  },
+
+  // ---------- tarefas ----------
+  async listTasks() {
+    const since = new Date(Date.now() - 30 * 86400000).toISOString();
+    return must(await sb.from('tasks').select('*').or(`done_at.is.null,done_at.gte.${since}`).order('position').limit(5000));
+  },
+  async saveTask(t) { return saveRow('tasks', t); },
+  async deleteTask(id) { return must(await sb.from('tasks').delete().eq('id', id)); },
+  async listTaskProjects() { return must(await sb.from('task_projects').select('*').eq('archived', false).order('position').order('created_at')); },
+  async saveTaskProject(p) { return saveRow('task_projects', p); },
+  async deleteTaskProject(id) { return must(await sb.from('task_projects').delete().eq('id', id)); },
+  async listTaskComments(taskId) { return must(await sb.from('task_comments').select('*').eq('task_id', taskId).order('created_at')); },
+  async addTaskComment(taskId, body, me) { return must(await sb.from('task_comments').insert({ task_id: taskId, body, author_id: me?.id, author_name: me?.nome }).select().single()); },
+  async deleteTaskComment(id) { return must(await sb.from('task_comments').delete().eq('id', id)); },
+  onTasks(cb) { const ch = sb.channel('tasks-' + Math.random().toString(36).slice(2)).on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, cb).subscribe(); return () => sb.removeChannel(ch); },
+
   // ---------- Facebook (login nativo) ----------
   async getAppSettings() { return must(await sb.from('app_settings').select('meta_app_id').eq('id', 1).maybeSingle()); },
   async saveAppSettings(patch) { return must(await sb.from('app_settings').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', 1)); },
@@ -251,6 +273,32 @@ function demoEntryToLead(e) {
   }));
 }
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+// próxima data de tarefa recorrente (igual ao banco: sempre depois de hoje)
+const demoNextDue = (from, recur) => {
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  let d = from ? new Date(from + 'T12:00') : new Date(today);
+  for (let i = 0; i < 400; i++) {
+    if (recur === 'diaria') d.setDate(d.getDate() + 1); else if (recur === 'semanal') d.setDate(d.getDate() + 7); else if (recur === 'mensal') d.setMonth(d.getMonth() + 1);
+    else d.setDate(d.getDate() + (d.getDay() === 5 ? 3 : d.getDay() === 6 ? 2 : 1));
+    if (d > today) break;
+  }
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+const DEMO_FU_STEPS = [
+  ['marketing', 0, 'Oi {nome}, tudo bem? Aqui é {usuario} da Tracto. Vi que você preencheu nosso formulário sobre o marketing da sua empresa.\n\nPosso te ligar rapidinho pra entender seu momento e te mostrar como podemos ajudar?'],
+  ['marketing', 1, '{nome}, conseguiu ver minha mensagem? Quero entender como estão hoje os anúncios e o comercial da sua empresa pra te mostrar onde dá pra crescer. Qual o melhor horário pra conversarmos?'],
+  ['marketing', 2, 'Oi {nome}! Dei uma olhada no que você respondeu no formulário e já tenho 2 ou 3 ideias que dá pra aplicar logo. Prefere que eu te explique por áudio ou numa ligação de 15 minutos?'],
+  ['marketing', 3, '{nome}, sei que a rotina é corrida. Só pra não deixar passar: ainda faz sentido conversarmos sobre aumentar as vendas da sua empresa este mês?'],
+  ['marketing', 7, 'Oi {nome}, essa é minha última mensagem por aqui pra não te incomodar. Se quiser retomar em outro momento, é só responder esta conversa que eu te atendo. Sucesso!'],
+  ['marketplace', 0, 'Oi {nome}, tudo bem? Aqui é {usuario} da Tracto. Vi que você preencheu nosso formulário sobre vender nos marketplaces.\n\nPosso te ligar rapidinho pra entender como está sua operação hoje?'],
+  ['marketplace', 1, '{nome}, conseguiu ver minha mensagem? Quero entender em quais marketplaces você já vende e onde estão os maiores gargalos. Qual o melhor horário pra conversarmos?'],
+  ['marketplace', 2, 'Oi {nome}! Olhei o que você respondeu e já tenho ideias pra melhorar anúncios, preço e posicionamento da sua loja. Prefere que eu te explique por áudio ou numa ligação de 15 minutos?'],
+  ['marketplace', 3, '{nome}, só pra não deixar passar: ainda faz sentido conversarmos sobre aumentar suas vendas no Mercado Livre, Shopee e Amazon este mês?'],
+  ['marketplace', 7, 'Oi {nome}, essa é minha última mensagem por aqui pra não te incomodar. Se quiser retomar em outro momento, é só responder esta conversa que eu te atendo. Sucesso!'],
+  ['recuperacao', 0, 'Oi {nome}, tudo bem? Aqui é {usuario} da Tracto. Vi que você começou nosso diagnóstico e parou no meio.\n\nSuas respostas ficaram salvas, é só continuar de onde parou (leva menos de 1 minuto): {link}'],
+  ['recuperacao', 1, '{nome}, ficou alguma dúvida no formulário? Se preferir, me conta aqui em 2 linhas como está sua empresa hoje que eu já te passo um direcionamento. O link continua salvo: {link}'],
+  ['recuperacao', 3, 'Oi {nome}, última lembrança por aqui: seu diagnóstico continua salvo e leva menos de 1 minuto pra terminar. Assim que concluir, nosso time te chama com uma análise personalizada: {link}']
+].map(([segment, wait_days, body], i, arr) => ({ segment, wait_days, body, position: arr.slice(0, i).filter((x) => x[0] === segment).length }));
 const DEMO_ME = { id: 'demo-user', nome: 'Você (demo)', email: 'demo@tracto', ativo: true, role: 'admin', team_id: null, pushcut_url: null, phone: null };
 const DEMO_TEAM = [DEMO_ME, { id: 'demo-isaque', nome: 'Isaque', email: 'isaque@tracto', ativo: true, role: 'sdr', team_id: null }, { id: 'demo-luiz', nome: 'Luiz', email: 'luiz@tracto', ativo: true, role: 'gestor', team_id: null }];
 const demoTeam = () => { const saved = read(K.me, {}); return DEMO_TEAM.map((p) => ({ ...p, ...(saved[p.id] || {}) })); };
@@ -613,6 +661,39 @@ const demo = {
   async listRecurring() { return read('tracto_v4_recurring', []).sort((a, b) => a.name.localeCompare(b.name)); },
   async saveRecurring(r) { const all = read('tracto_v4_recurring', []); const i = all.findIndex((x) => x.id === r.id); const row = i >= 0 ? { ...all[i], ...r } : { id: uid(), created_at: now(), active: true, due_day: 1, category: 'Ferramentas', start_date: new Date().toISOString().slice(0, 10), generated_until: null, ...r }; if (i >= 0) all[i] = row; else all.push(row); write('tracto_v4_recurring', all); return row; },
   async deleteRecurring(id) { write('tracto_v4_recurring', read('tracto_v4_recurring', []).filter((x) => x.id !== id)); },
+
+  // ---------- follow-up ----------
+  async listFollowupSteps() { const saved = read('tracto_v5_fu_steps', null); return saved || DEMO_FU_STEPS.map((x, i) => ({ id: 'fu' + i, ...x })); },
+  async saveFollowupSteps(segment, steps) {
+    const all = (await this.listFollowupSteps()).filter((x) => x.segment !== segment);
+    write('tracto_v5_fu_steps', [...all, ...steps.map((x, i) => ({ id: uid(), segment, position: i, wait_days: x.wait_days, body: x.body }))]);
+  },
+
+  // ---------- tarefas (mesmas regras do banco: recorrente pula pra próxima data) ----------
+  async listTasks() { const since = Date.now() - 30 * 86400000; return read('tracto_v5_tasks').filter((t) => !t.done_at || new Date(t.done_at) >= since).sort((a, b) => a.position - b.position); },
+  async saveTask(t) {
+    const all = read('tracto_v5_tasks'); const i = all.findIndex((x) => x.id === t.id); const old = i >= 0 ? all[i] : null;
+    let row = old ? { ...old, ...t, updated_at: now() } : { id: uid(), created_at: now(), updated_at: now(), notes: null, project_id: null, parent_id: null, assignee_id: null, created_by: demoMe().id, due_date: null, due_time: null, priority: 4, recur: null, lead_id: null, position: Date.now(), done_at: null, done_by: null, ...t };
+    if (old && row.done_at && !old.done_at) {
+      row.done_by = demoMe().id;
+      if (row.recur && !row.parent_id) {
+        row.due_date = demoNextDue(old.due_date, row.recur); row.done_at = null; row.done_by = null;
+        all.forEach((x, k) => { if (x.parent_id === row.id) all[k] = { ...x, done_at: null, done_by: null }; });
+        const c = read('tracto_v5_task_comments'); c.push({ id: uid(), task_id: row.id, created_at: now(), author_id: demoMe().id, author_name: demoMe().nome, body: `Concluída. Próxima em ${row.due_date.slice(8, 10)}/${row.due_date.slice(5, 7)}` }); write('tracto_v5_task_comments', c);
+      }
+    }
+    if (!row.done_at) row.done_by = null;
+    if (i >= 0) all[i] = row; else all.push(row);
+    write('tracto_v5_tasks', all); return row;
+  },
+  async deleteTask(id) { const all = read('tracto_v5_tasks'); const gone = new Set([id]); let n; do { n = gone.size; all.forEach((t) => { if (gone.has(t.parent_id)) gone.add(t.id); }); } while (gone.size !== n); write('tracto_v5_tasks', all.filter((t) => !gone.has(t.id))); },
+  async listTaskProjects() { return read('tracto_v5_task_projects').filter((p) => !p.archived).sort((a, b) => a.position - b.position); },
+  async saveTaskProject(p) { const all = read('tracto_v5_task_projects'); const i = all.findIndex((x) => x.id === p.id); const row = i >= 0 ? { ...all[i], ...p } : { id: uid(), created_at: now(), color: '#FFAD00', position: all.length, archived: false, created_by: demoMe().id, ...p }; if (i >= 0) all[i] = row; else all.push(row); write('tracto_v5_task_projects', all); return row; },
+  async deleteTaskProject(id) { write('tracto_v5_task_projects', read('tracto_v5_task_projects').filter((p) => p.id !== id)); const ids = read('tracto_v5_tasks').filter((t) => t.project_id === id).map((t) => t.id); for (const t of ids) await this.deleteTask(t); },
+  async listTaskComments(taskId) { return read('tracto_v5_task_comments').filter((c) => c.task_id === taskId).sort((a, b) => a.created_at.localeCompare(b.created_at)); },
+  async addTaskComment(taskId, body, me) { const c = read('tracto_v5_task_comments'); const row = { id: uid(), task_id: taskId, created_at: now(), author_id: me?.id, author_name: me?.nome, body }; c.push(row); write('tracto_v5_task_comments', c); return row; },
+  async deleteTaskComment(id) { write('tracto_v5_task_comments', read('tracto_v5_task_comments').filter((c) => c.id !== id)); },
+  onTasks() { return () => {}; },
   async runRecurring() {
     const all = read('tracto_v4_recurring', []); const fin = read(K.fin); let n = 0;
     const ym = (d) => d.slice(0, 7); const cur = new Date().toISOString().slice(0, 7);
