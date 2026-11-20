@@ -196,6 +196,11 @@ const live = {
   async deleteRecurring(id) { return must(await sb.from('finance_recurring').delete().eq('id', id)); },
   async runRecurring() { try { return must(await sb.rpc('finance_recurring_run')); } catch (e) { return 0; } },
 
+  // ---------- avisos de lead no grupo do WhatsApp ----------
+  async waNotifyGet() { return must(await sb.rpc('wa_notify_get')); },
+  async waNotifySet(group, name, enabled) { return must(await sb.rpc('wa_notify_set', { p_group: group, p_group_name: name, p_enabled: enabled })); },
+  async waNotifyTest() { return must(await sb.rpc('wa_notify_test')); },
+
   // ---------- follow-up ----------
   async listFollowupSteps() { return must(await sb.from('followup_steps').select('*').order('segment').order('position')); },
   async saveFollowupSteps(segment, steps) {
@@ -661,6 +666,11 @@ const demo = {
   async listRecurring() { return read('tracto_v4_recurring', []).sort((a, b) => a.name.localeCompare(b.name)); },
   async saveRecurring(r) { const all = read('tracto_v4_recurring', []); const i = all.findIndex((x) => x.id === r.id); const row = i >= 0 ? { ...all[i], ...r } : { id: uid(), created_at: now(), active: true, due_day: 1, category: 'Ferramentas', start_date: new Date().toISOString().slice(0, 10), generated_until: null, ...r }; if (i >= 0) all[i] = row; else all.push(row); write('tracto_v4_recurring', all); return row; },
   async deleteRecurring(id) { write('tracto_v4_recurring', read('tracto_v4_recurring', []).filter((x) => x.id !== id)); },
+
+  // ---------- avisos de lead no grupo do WhatsApp ----------
+  async waNotifyGet() { return { ready: true, enabled: false, group: null, group_name: null, ...read('tracto_v5_wa_notify', {}) }; },
+  async waNotifySet(group, name, enabled) { write('tracto_v5_wa_notify', { group, group_name: name, enabled: !!enabled && !!group }); },
+  async waNotifyTest() { return true; },
 
   // ---------- follow-up ----------
   async listFollowupSteps() { const saved = read('tracto_v5_fu_steps', null); return saved || DEMO_FU_STEPS.map((x, i) => ({ id: 'fu' + i, ...x })); },
